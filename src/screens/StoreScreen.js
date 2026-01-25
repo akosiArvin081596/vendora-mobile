@@ -10,7 +10,6 @@ import {
   RefreshControl,
   useWindowDimensions,
   Platform,
-  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -31,6 +30,7 @@ import FlashSaleCard from '../components/FlashSaleCard';
 import SortFilterModal from '../components/SortFilterModal';
 import LoginModal from '../components/LoginModal';
 import ProfileModal from '../components/ProfileModal';
+import VendoraLoading from '../components/VendoraLoading';
 import { useAuth } from '../context/AuthContext';
 
 export default function StoreScreen() {
@@ -354,16 +354,9 @@ export default function StoreScreen() {
     />
   );
 
-  // Show loading screen while fetching products
+  // Show branded loading screen while fetching products
   if (isLoadingProducts) {
-    return (
-      <SafeAreaView className="flex-1 bg-vendora-bg items-center justify-center">
-        <ActivityIndicator size="large" color="#a855f7" />
-        <Text style={{ color: '#9ca3af', marginTop: 16, fontSize: 16 }}>
-          Loading store...
-        </Text>
-      </SafeAreaView>
-    );
+    return <VendoraLoading message="Loading store..." />;
   }
 
   return (

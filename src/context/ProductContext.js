@@ -372,6 +372,72 @@ export function ProductProvider({ children }) {
     }
   }, []);
 
+  // Silent product updates for real-time sync (no loading state)
+  // These are used by SocketContext to seamlessly update the UI
+
+  // Add product silently (for real-time sync)
+  const addProductSilently = useCallback((productData) => {
+    if (!productData || !productData.id) {
+      console.warn('[ProductContext] Invalid product data for silent add');
+      return;
+    }
+
+    const normalizedProduct = normalizeProduct(productData);
+
+    // Add to public products if it's active and e-commerce enabled
+    if (normalizedProduct.is_active !== false) {
+      setPublicProducts((prev) => {
+        // Check if product already exists
+        const exists = prev.some((p) => p.id === normalizedProduct.id);
+        if (exists) {
+          // Update existing product instead
+          return prev.map((p) => p.id === normalizedProduct.id ? normalizedProduct : p);
+        }
+        // Add to beginning of list (newest first)
+        return [normalizedProduct, ...prev];
+      });
+    }
+
+    console.log('[ProductContext] Product added silently:', normalizedProduct.id);
+  }, []);
+
+  // Update product silently (for real-time sync)
+  const updateProductSilently = useCallback((productData) => {
+    if (!productData || !productData.id) {
+      console.warn('[ProductContext] Invalid product data for silent update');
+      return;
+    }
+
+    const normalizedProduct = normalizeProduct(productData);
+
+    const updateFn = (prev) =>
+      prev.map((product) =>
+        product.id === normalizedProduct.id
+          ? { ...product, ...normalizedProduct }
+          : product
+      );
+
+    setInventory(updateFn);
+    setPublicProducts(updateFn);
+
+    console.log('[ProductContext] Product updated silently:', normalizedProduct.id);
+  }, []);
+
+  // Remove product silently (for real-time sync)
+  const removeProductSilently = useCallback((productId) => {
+    if (!productId) {
+      console.warn('[ProductContext] Invalid productId for silent remove');
+      return;
+    }
+
+    const filterFn = (prev) => prev.filter((product) => product.id !== productId);
+
+    setInventory(filterFn);
+    setPublicProducts(filterFn);
+
+    console.log('[ProductContext] Product removed silently:', productId);
+  }, []);
+
   // Get product by ID from inventory
   const getInventoryProductById = useCallback((productId) => {
     return inventory.find((product) => product.id === productId);
@@ -518,6 +584,11 @@ export function ProductProvider({ children }) {
     addProduct,
     updateProduct,
     deleteProduct,
+
+    // Silent updates for real-time sync (no loading state)
+    addProductSilently,
+    updateProductSilently,
+    removeProductSilently,
 
     // Lookups
     getInventoryProductById,

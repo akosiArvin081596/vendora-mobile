@@ -31,7 +31,13 @@ export function SocketProvider({ children }) {
   });
 
   const { currentUser } = useAuth();
-  const { fetchProducts, fetchCategories } = useProducts();
+  const {
+    fetchProducts,
+    fetchCategories,
+    addProductSilently,
+    updateProductSilently,
+    removeProductSilently,
+  } = useProducts();
   const { addOrder } = useOrders();
 
   const appStateRef = useRef(AppState.currentState);
@@ -43,28 +49,55 @@ export function SocketProvider({ children }) {
   const setupEventListeners = useCallback(() => {
     console.log('[Socket] Setting up event listeners...');
 
-    // Product events
+    // Product events - use silent updates to avoid loading screen disruption
     socketService.on('product:created', (data) => {
       console.log('[Socket] Received product:created', data);
-      console.log('[Socket] Calling fetchProducts...');
-      fetchProducts({ forceRefresh: true })
-        .then(() => console.log('[Socket] fetchProducts completed'))
-        .catch((err) => console.error('[Socket] fetchProducts error:', err));
+      // Backend sends product.toArray() directly (product data at root level)
+      if (data?.id) {
+        addProductSilently(data);
+      } else {
+        // Fallback to full refresh if no product data
+        console.log('[Socket] No product data, falling back to refresh');
+        fetchProducts({ forceRefresh: true });
+      }
       updateSyncStats('product:created');
     });
 
-    socketService.on('product:updated', () => {
-      fetchProducts({ forceRefresh: true });
+    socketService.on('product:updated', (data) => {
+      console.log('[Socket] Received product:updated', data);
+      // Backend sends product.toArray() directly
+      if (data?.id) {
+        updateProductSilently(data);
+      } else {
+        // Fallback to full refresh if no product data
+        fetchProducts({ forceRefresh: true });
+      }
       updateSyncStats('product:updated');
     });
 
-    socketService.on('product:deleted', () => {
-      fetchProducts({ forceRefresh: true });
+    socketService.on('product:deleted', (data) => {
+      console.log('[Socket] Received product:deleted', data);
+      // Backend sends { id: productId }
+      if (data?.id) {
+        removeProductSilently(data.id);
+      } else {
+        // Fallback to full refresh if no product ID
+        fetchProducts({ forceRefresh: true });
+      }
       updateSyncStats('product:deleted');
     });
 
-    socketService.on('stock:updated', () => {
-      fetchProducts({ forceRefresh: true });
+    socketService.on('stock:updated', (data) => {
+      console.log('[Socket] Received stock:updated', data);
+      // Backend sends { productId, newStock } - only stock change, not full product
+      // For stock updates, we need to fetch the full product or update just the stock field
+      if (data?.productId && data?.newStock !== undefined) {
+        // Update only the stock field for the specific product
+        updateProductSilently({ id: data.productId, stock: data.newStock });
+      } else {
+        // Fallback to full refresh
+        fetchProducts({ forceRefresh: true });
+      }
       updateSyncStats('stock:updated');
     });
 
@@ -92,7 +125,7 @@ export function SocketProvider({ children }) {
     socketService.on('order:updated', () => {
       updateSyncStats('order:updated');
     });
-  }, [fetchProducts, fetchCategories]);
+  }, [fetchProducts, fetchCategories, addProductSilently, updateProductSilently, removeProductSilently]);
 
   /**
    * Remove event listeners
