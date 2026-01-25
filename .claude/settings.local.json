@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx expo start:*)",
+      "Bash(npx expo prebuild:*)",
+      "Bash(npx expo run:android)",
+      "Bash(ls -la \"C:\\\\Users\\\\DSWDSRV-CARAGA\\\\Desktop\\\\VENDORA\\\\vendora-pos\\\\src\"\" 2>/dev/null || echo \"src directory not found \")",
+      "Bash(done)",
+      "Bash(npm view:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "Bash(npm install:*)",
+      "Bash(npx patch-package:*)",
+      "Bash(npx expo install:*)",
+      "Bash(curl:*)",
+      "Bash(npx babel:*)",
+      "Bash(gradlew.bat assembleRelease:*)",
+      "Bash(./gradlew assembleRelease:*)",
+      "Bash(npm search:*)",
+      "Bash(npm info:*)",
+      "Bash(dir \"C:\\\\Users\\\\DSWDSRV-CARAGA\\\\Desktop\\\\VENDORA\\\\development\" /B)",
+      "Bash(npm start)",
+      "Bash(php artisan config:clear:*)",
+      "Bash(tree:*)"
+    ]
+  }
+}

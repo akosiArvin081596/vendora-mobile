@@ -1,0 +1,25 @@
+diff --git a/node_modules/react-native-safe-area-context/lib/module/NativeSafeAreaProvider.web.js b/node_modules/react-native-safe-area-context/lib/module/NativeSafeAreaProvider.web.js
+index 1234567..abcdefg 100644
+--- a/node_modules/react-native-safe-area-context/lib/module/NativeSafeAreaProvider.web.js
++++ b/node_modules/react-native-safe-area-context/lib/module/NativeSafeAreaProvider.web.js
+@@ -58,8 +58,17 @@ export function NativeSafeAreaProvider({
+     element.addEventListener(getSupportedTransitionEvent(), onEnd);
+     onEnd();
+     return () => {
+-      document.body.removeChild(element);
+-      element.removeEventListener(getSupportedTransitionEvent(), onEnd);
++      // Check if element is still in the DOM before removing (fixes React 19 strict mode)
++      try {
++        if (element && element.parentNode) {
++          element.parentNode.removeChild(element);
++        }
++      } catch (e) {
++        // Ignore removeChild errors - element may already be removed
++      }
++      try {
++        element.removeEventListener(getSupportedTransitionEvent(), onEnd);
++      } catch (e) {
++        // Ignore if element is already cleaned up
++      }
+     };
+   }, [onInsetsChange]);

@@ -1,0 +1,46 @@
+The backend has been updated with a bulk pricing feature for products. Update the frontend to use the correct
+  payload format when creating/updating products with bulk pricing.
+
+  ## Backend API Expects (snake_case)
+
+  When creating or updating a product with bulk pricing, use this format:
+
+  {
+    "name": "Organic Rice",
+    "sku": "GR-1001",
+    "price": 55.00,
+    "stock": 100,
+    "category_id": 3,
+    "bulk_pricing": [
+      { "min_qty": 10, "price": 50.00 },
+      { "min_qty": 50, "price": 45.00 },
+      { "min_qty": 100, "price": 40.00 }
+    ]
+  }
+
+  Key Points
+
+  1. Use bulk_pricing (snake_case), NOT bulkPricing (camelCase)
+  2. Use min_qty (snake_case), NOT minQty (camelCase)
+  3. min_qty must be an integer >= 2
+  4. price is in decimal format (e.g., 50.00), backend converts to cents
+  5. bulk_pricing is optional/nullable
+
+  API Response Format
+
+  The API returns bulk pricing in the response:
+
+  {
+    "id": 1,
+    "name": "Organic Rice",
+    "price": 5500,
+    "bulk_pricing": [
+      { "id": 1, "min_qty": 10, "price": 5000 },
+      { "id": 2, "min_qty": 50, "price": 4500 },
+      { "id": 3, "min_qty": 100, "price": 4000 }
+    ]
+  }
+
+  Note: Response prices are in cents (integer), input prices are in decimal.
+
+  Find and update any product forms or API calls that need to support bulk pricing.
