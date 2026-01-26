@@ -11,16 +11,16 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { useOrder } from '../context/OrderContext';
-import { useProduct } from '../context/ProductContext';
+import { useOrders } from '../context/OrderContext';
+import { useProducts } from '../context/ProductContext';
 
 const { width } = Dimensions.get('window');
 const isWide = width >= 768;
 
 export default function DashboardScreen() {
   const { currentUser } = useAuth();
-  const { orders } = useOrder();
-  const { userInventory } = useProduct();
+  const { orders } = useOrders();
+  const { inventory } = useProducts();
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({
     todaySales: 0,
@@ -31,7 +31,7 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     calculateStats();
-  }, [orders, userInventory]);
+  }, [orders, inventory]);
 
   const calculateStats = () => {
     const today = new Date().toDateString();
@@ -46,7 +46,7 @@ export default function DashboardScreen() {
     );
 
     // Count low stock items (less than 10 units)
-    const lowStockItems = userInventory.filter(
+    const lowStockItems = inventory.filter(
       (product) => (product.stock || product.quantity || 0) < 10
     ).length;
 
@@ -54,7 +54,7 @@ export default function DashboardScreen() {
       todaySales,
       totalOrders: orders.length,
       lowStockItems,
-      totalProducts: userInventory.length,
+      totalProducts: inventory.length,
     });
   };
 

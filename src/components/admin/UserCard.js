@@ -48,10 +48,27 @@ export default function UserCard({
   const formatDate = (dateString) => {
     if (!dateString) return 'Never';
     const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return 'Never';
     return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
+      timeZone: 'Asia/Manila',
+    });
+  };
+
+  const formatDateTime = (dateString) => {
+    if (!dateString) return 'Never';
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return 'Never';
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Manila',
     });
   };
 
@@ -113,7 +130,7 @@ export default function UserCard({
         <View style={styles.infoItem}>
           <Ionicons name="time-outline" size={14} color="#9ca3af" />
           <Text style={styles.infoText}>
-            Last login: {formatDate(user.lastLoginAt)}
+            Last login: {formatDateTime(user.lastLoginAt)}
           </Text>
         </View>
         <View style={styles.infoItem}>

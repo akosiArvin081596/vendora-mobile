@@ -69,6 +69,50 @@ const buildValidationError = (data) => {
   };
 };
 
+const resolveErrorMessage = (data, fallback) => {
+  if (!data) {
+    return fallback;
+  }
+
+  if (typeof data === 'string') {
+    return data;
+  }
+
+  if (typeof data?.message === 'string' && data.message.trim()) {
+    return data.message;
+  }
+
+  if (typeof data?.error === 'string' && data.error.trim()) {
+    return data.error;
+  }
+
+  if (typeof data?.error?.message === 'string' && data.error.message.trim()) {
+    return data.error.message;
+  }
+
+  return fallback;
+};
+
+const resolveErrorCode = (data, fallback) => {
+  if (!data) {
+    return fallback;
+  }
+
+  if (typeof data?.error?.code === 'string' && data.error.code.trim()) {
+    return data.error.code;
+  }
+
+  if (typeof data?.error === 'string' && data.error.trim()) {
+    return data.error;
+  }
+
+  if (typeof data?.code === 'string' && data.code.trim()) {
+    return data.code;
+  }
+
+  return fallback;
+};
+
 // Request interceptor - add auth token to requests
 api.interceptors.request.use(
   async (config) => {
@@ -96,9 +140,9 @@ api.interceptors.response.use(
         return response.data;
       } else {
         // API returned success: false
-        const error = new Error(response.data.error?.message || 'Request failed');
-        error.code = response.data.error?.code;
-        error.details = response.data.error?.details;
+        const error = new Error(resolveErrorMessage(response.data, 'Request failed'));
+        error.code = resolveErrorCode(response.data, 'REQUEST_FAILED');
+        error.details = response.data?.error?.details;
         return Promise.reject(error);
       }
     }
@@ -125,18 +169,22 @@ api.interceptors.response.use(
           message: data?.error?.message || data?.message,
           code: data?.error?.code,
         });
-        const authError = new Error(data?.error?.message || 'Session expired. Please login again.');
-        authError.code = 'UNAUTHORIZED';
+        const isLoginRequest = error?.config?.url?.includes('/auth/login');
+        const authFallback = isLoginRequest
+          ? 'The email or password you entered is incorrect.'
+          : 'Session expired. Please login again.';
+        const authError = new Error(resolveErrorMessage(data, authFallback));
+        authError.code = resolveErrorCode(data, 'UNAUTHORIZED');
         return Promise.reject(authError);
 
       case 403:
-        const forbiddenError = new Error(data?.error?.message || 'You do not have permission to perform this action.');
-        forbiddenError.code = 'FORBIDDEN';
+        const forbiddenError = new Error(resolveErrorMessage(data, 'You do not have permission to perform this action.'));
+        forbiddenError.code = resolveErrorCode(data, 'FORBIDDEN');
         return Promise.reject(forbiddenError);
 
       case 404:
-        const notFoundError = new Error(data?.error?.message || 'Resource not found.');
-        notFoundError.code = data?.error?.code || 'NOT_FOUND';
+        const notFoundError = new Error(resolveErrorMessage(data, 'Resource not found.'));
+        notFoundError.code = resolveErrorCode(data, 'NOT_FOUND');
         return Promise.reject(notFoundError);
 
       case 422:
@@ -147,14 +195,14 @@ api.interceptors.response.use(
         return Promise.reject(validationError);
 
       case 409:
-        const conflictError = new Error(data?.error?.message || 'Resource already exists.');
-        conflictError.code = data?.error?.code || 'CONFLICT';
+        const conflictError = new Error(resolveErrorMessage(data, 'Resource already exists.'));
+        conflictError.code = resolveErrorCode(data, 'CONFLICT');
         return Promise.reject(conflictError);
 
       case 500:
       default:
-        const serverError = new Error(data?.error?.message || 'Server error. Please try again later.');
-        serverError.code = 'SERVER_ERROR';
+        const serverError = new Error(resolveErrorMessage(data, 'Server error. Please try again later.'));
+        serverError.code = resolveErrorCode(data, 'SERVER_ERROR');
         return Promise.reject(serverError);
     }
   }

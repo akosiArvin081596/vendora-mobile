@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useOrder } from '../context/OrderContext';
+import { useOrders } from '../context/OrderContext';
 
 const { width } = Dimensions.get('window');
 const isWide = width >= 768;
@@ -32,7 +32,7 @@ const STATUS_ICONS = {
 };
 
 export default function SalesScreen() {
-  const { orders } = useOrder();
+  const { orders } = useOrders();
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedOrder, setSelectedOrder] = useState(null);

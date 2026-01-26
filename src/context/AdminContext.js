@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { adminApi } from '../api/admin';
 import {
   STORAGE_KEYS,
   defaultSettings,
@@ -13,25 +14,29 @@ const AdminContext = createContext();
 export function AdminProvider({ children }) {
   const { currentUser } = useAuth();
   const [users, setUsers] = useState([]);
+  const [usersPagination, setUsersPagination] = useState(null);
   const [vendorApplications, setVendorApplications] = useState([]);
   const [settings, setSettings] = useState(defaultSettings);
   const [activityLogs, setActivityLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  // Initialize admin data from storage
+  // Initialize admin data
   useEffect(() => {
-    initializeAdminData();
-  }, []);
+    if (currentUser?.user_type === 'admin' || currentUser?.role === 'admin') {
+      initializeAdminData();
+    }
+  }, [currentUser]);
 
   const initializeAdminData = async () => {
-    try {
-      // Load users
-      const usersJson = await AsyncStorage.getItem(STORAGE_KEYS.USERS);
-      if (usersJson) {
-        setUsers(JSON.parse(usersJson));
-      }
+    setIsLoading(true);
+    setError(null);
 
-      // Load vendor applications (with sample data if empty)
+    try {
+      // Fetch users from backend API
+      await fetchUsers();
+
+      // Load vendor applications from storage (placeholder for now)
       const vendorAppsJson = await AsyncStorage.getItem(STORAGE_KEYS.VENDOR_APPS);
       if (vendorAppsJson) {
         setVendorApplications(JSON.parse(vendorAppsJson));
@@ -40,7 +45,7 @@ export function AdminProvider({ children }) {
         await AsyncStorage.setItem(STORAGE_KEYS.VENDOR_APPS, JSON.stringify(sampleVendorApplications));
       }
 
-      // Load settings
+      // Load settings from storage
       const settingsJson = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
       if (settingsJson) {
         setSettings(JSON.parse(settingsJson));
@@ -48,74 +53,107 @@ export function AdminProvider({ children }) {
         await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(defaultSettings));
       }
 
-      // Load activity logs
+      // Load activity logs from storage
       const logsJson = await AsyncStorage.getItem(STORAGE_KEYS.ACTIVITY_LOGS);
       if (logsJson) {
         setActivityLogs(JSON.parse(logsJson));
       }
-    } catch (error) {
-      console.error('Error initializing admin data:', error);
+    } catch (err) {
+      console.error('Error initializing admin data:', err);
+      setError(err.message);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Log activity
-  const logActivity = useCallback(async (action, targetType, targetId, targetName, details = {}) => {
-    if (!currentUser) return;
+  // ============ USER MANAGEMENT (API) ============
 
-    const logEntry = {
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      userId: currentUser.id,
-      userName: currentUser.name,
-      userRole: currentUser.role,
-      action,
-      targetType,
-      targetId,
-      targetName,
-      details,
-    };
-
-    const updatedLogs = [logEntry, ...activityLogs].slice(0, 500); // Keep last 500 logs
-    setActivityLogs(updatedLogs);
-
+  /**
+   * Fetch users from backend API
+   */
+  const fetchUsers = useCallback(async (params = {}) => {
     try {
-      await AsyncStorage.setItem(STORAGE_KEYS.ACTIVITY_LOGS, JSON.stringify(updatedLogs));
-    } catch (error) {
-      console.error('Error saving activity log:', error);
+      setIsLoading(true);
+      const response = await adminApi.getUsers(params);
+
+      // Handle paginated response
+      if (response.data) {
+        // Transform backend data to match frontend expectations
+        const transformedUsers = response.data.map(user => ({
+          id: user.id.toString(),
+          name: user.name,
+          email: user.email,
+          role: user.user_type, // Map user_type to role for frontend
+          status: user.status || 'active',
+          phone: user.phone || '',
+          createdAt: user.created_at,
+          updatedAt: user.updated_at,
+          lastLoginAt: user.last_login_at,
+        }));
+        setUsers(transformedUsers);
+        setUsersPagination({
+          currentPage: response.current_page,
+          lastPage: response.last_page,
+          perPage: response.per_page,
+          total: response.total,
+        });
+      } else {
+        // Non-paginated response
+        const transformedUsers = (Array.isArray(response) ? response : []).map(user => ({
+          id: user.id.toString(),
+          name: user.name,
+          email: user.email,
+          role: user.user_type,
+          status: user.status || 'active',
+          phone: user.phone || '',
+          createdAt: user.created_at,
+          updatedAt: user.updated_at,
+          lastLoginAt: user.last_login_at,
+        }));
+        setUsers(transformedUsers);
+      }
+    } catch (err) {
+      console.error('Error fetching users:', err);
+      setError(err.message);
+      throw err;
+    } finally {
+      setIsLoading(false);
     }
-  }, [currentUser, activityLogs]);
+  }, []);
 
-  // USER MANAGEMENT
-
-  // Create user
+  /**
+   * Create a new user via API
+   */
   const createUser = useCallback(async (userData) => {
     try {
-      const emailExists = users.some(u =>
-        u.email.toLowerCase() === userData.email.toLowerCase()
-      );
-      if (emailExists) {
-        throw new Error('Email already exists');
-      }
-
-      const newUser = {
-        id: `user-${Date.now()}`,
+      // Transform frontend data to backend format
+      const apiData = {
+        name: userData.name,
         email: userData.email,
         password: userData.password,
-        name: userData.name,
-        role: userData.role,
-        status: 'active',
-        phone: userData.phone || '',
-        avatar: null,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: null,
+        user_type: userData.role, // Map role to user_type for backend
+        phone: userData.phone || null,
+        status: userData.status || 'active',
       };
 
-      const updatedUsers = [...users, newUser];
-      setUsers(updatedUsers);
-      await AsyncStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+      const response = await adminApi.createUser(apiData);
 
+      // Transform response and add to local state
+      const newUser = {
+        id: response.user.id.toString(),
+        name: response.user.name,
+        email: response.user.email,
+        role: response.user.user_type,
+        status: response.user.status || 'active',
+        phone: response.user.phone || '',
+        createdAt: response.user.created_at,
+        updatedAt: response.user.updated_at,
+        lastLoginAt: response.user.last_login_at,
+      };
+
+      setUsers(prev => [newUser, ...prev]);
+
+      // Log activity locally
       await logActivity(
         ACTIVITY_ACTIONS.USER_CREATE,
         'user',
@@ -125,43 +163,45 @@ export function AdminProvider({ children }) {
       );
 
       return newUser;
-    } catch (error) {
-      throw error;
+    } catch (err) {
+      console.error('Error creating user:', err);
+      const message = err.response?.data?.message || err.message || 'Failed to create user';
+      throw new Error(message);
     }
-  }, [users, logActivity]);
+  }, []);
 
-  // Update user
+  /**
+   * Update a user via API
+   */
   const updateUser = useCallback(async (userId, updates) => {
     try {
-      const userIndex = users.findIndex(u => u.id === userId);
-      if (userIndex === -1) {
-        throw new Error('User not found');
-      }
+      // Transform frontend data to backend format
+      const apiData = {};
+      if (updates.name) apiData.name = updates.name;
+      if (updates.email) apiData.email = updates.email;
+      if (updates.password) apiData.password = updates.password;
+      if (updates.role) apiData.user_type = updates.role;
+      if (updates.phone !== undefined) apiData.phone = updates.phone;
+      if (updates.status) apiData.status = updates.status;
 
-      const existingUser = users[userIndex];
+      const response = await adminApi.updateUser(userId, apiData);
 
-      // Check role hierarchy
-      if (!canManageUser(currentUser?.role, existingUser.role)) {
-        throw new Error('You do not have permission to modify this user');
-      }
+      // Transform response and update local state
+      const updatedUser = {
+        id: response.user.id.toString(),
+        name: response.user.name,
+        email: response.user.email,
+        role: response.user.user_type,
+        status: response.user.status || 'active',
+        phone: response.user.phone || '',
+        createdAt: response.user.created_at,
+        updatedAt: response.user.updated_at,
+        lastLoginAt: response.user.last_login_at,
+      };
 
-      // Check email uniqueness if changing email
-      if (updates.email && updates.email !== existingUser.email) {
-        const emailExists = users.some(u =>
-          u.email.toLowerCase() === updates.email.toLowerCase() && u.id !== userId
-        );
-        if (emailExists) {
-          throw new Error('Email already exists');
-        }
-      }
+      setUsers(prev => prev.map(u => u.id === userId.toString() ? updatedUser : u));
 
-      const updatedUser = { ...existingUser, ...updates };
-      const updatedUsers = [...users];
-      updatedUsers[userIndex] = updatedUser;
-
-      setUsers(updatedUsers);
-      await AsyncStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
-
+      // Log activity locally
       await logActivity(
         ACTIVITY_ACTIONS.USER_UPDATE,
         'user',
@@ -171,84 +211,111 @@ export function AdminProvider({ children }) {
       );
 
       return updatedUser;
-    } catch (error) {
-      throw error;
+    } catch (err) {
+      console.error('Error updating user:', err);
+      const message = err.response?.data?.message || err.message || 'Failed to update user';
+      throw new Error(message);
     }
-  }, [users, currentUser, logActivity]);
+  }, []);
 
-  // Delete user
+  /**
+   * Delete a user via API
+   */
   const deleteUser = useCallback(async (userId) => {
     try {
-      const user = users.find(u => u.id === userId);
-      if (!user) {
-        throw new Error('User not found');
+      const user = users.find(u => u.id === userId.toString());
+
+      await adminApi.deleteUser(userId);
+
+      // Remove from local state
+      setUsers(prev => prev.filter(u => u.id !== userId.toString()));
+
+      // Log activity locally
+      if (user) {
+        await logActivity(
+          ACTIVITY_ACTIONS.USER_DELETE,
+          'user',
+          userId,
+          user.name,
+          { email: user.email, role: user.role }
+        );
       }
-
-      // Check role hierarchy
-      if (!canManageUser(currentUser?.role, user.role)) {
-        throw new Error('You do not have permission to delete this user');
-      }
-
-      // Prevent deleting yourself
-      if (userId === currentUser?.id) {
-        throw new Error('You cannot delete your own account');
-      }
-
-      const updatedUsers = users.filter(u => u.id !== userId);
-      setUsers(updatedUsers);
-      await AsyncStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
-
-      await logActivity(
-        ACTIVITY_ACTIONS.USER_DELETE,
-        'user',
-        userId,
-        user.name,
-        { email: user.email, role: user.role }
-      );
-    } catch (error) {
-      throw error;
+    } catch (err) {
+      console.error('Error deleting user:', err);
+      const message = err.response?.data?.message || err.message || 'Failed to delete user';
+      throw new Error(message);
     }
-  }, [users, currentUser, logActivity]);
+  }, [users]);
 
-  // Change user status
+  /**
+   * Change user status via API
+   */
   const changeUserStatus = useCallback(async (userId, newStatus) => {
     try {
-      const user = users.find(u => u.id === userId);
-      if (!user) {
-        throw new Error('User not found');
-      }
+      const user = users.find(u => u.id === userId.toString());
 
-      // Check role hierarchy
-      if (!canManageUser(currentUser?.role, user.role)) {
-        throw new Error('You do not have permission to modify this user');
-      }
+      const response = await adminApi.changeUserStatus(userId, newStatus);
 
-      // Prevent deactivating yourself
-      if (userId === currentUser?.id && newStatus !== 'active') {
-        throw new Error('You cannot deactivate your own account');
-      }
+      // Update local state
+      const updatedUser = {
+        id: response.user.id.toString(),
+        name: response.user.name,
+        email: response.user.email,
+        role: response.user.user_type,
+        status: response.user.status || 'active',
+        phone: response.user.phone || '',
+        createdAt: response.user.created_at,
+        updatedAt: response.user.updated_at,
+        lastLoginAt: response.user.last_login_at,
+      };
 
-      const updatedUsers = users.map(u =>
-        u.id === userId ? { ...u, status: newStatus } : u
-      );
-      setUsers(updatedUsers);
-      await AsyncStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+      setUsers(prev => prev.map(u => u.id === userId.toString() ? updatedUser : u));
 
+      // Log activity locally
       const actionType = newStatus === 'active'
         ? ACTIVITY_ACTIONS.USER_ACTIVATE
         : newStatus === 'suspended'
           ? ACTIVITY_ACTIONS.USER_SUSPEND
           : ACTIVITY_ACTIONS.USER_DEACTIVATE;
 
-      await logActivity(actionType, 'user', userId, user.name, { newStatus });
-    } catch (error) {
-      throw error;
+      await logActivity(actionType, 'user', userId, user?.name || 'Unknown', { newStatus });
+    } catch (err) {
+      console.error('Error changing user status:', err);
+      const message = err.response?.data?.message || err.message || 'Failed to change user status';
+      throw new Error(message);
     }
-  }, [users, currentUser, logActivity]);
+  }, [users]);
 
-  // VENDOR APPLICATIONS
+  // ============ ACTIVITY LOGGING (Local) ============
 
-  // Approve vendor
+  const logActivity = useCallback(async (action, targetType, targetId, targetName, details = {}) => {
+    if (!currentUser) return;
+
+    const logEntry = {
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userRole: currentUser.role || currentUser.user_type,
+      action,
+      targetType,
+      targetId,
+      targetName,
+      details,
+    };
+
+    const updatedLogs = [logEntry, ...activityLogs].slice(0, 500);
+    setActivityLogs(updatedLogs);
+
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.ACTIVITY_LOGS, JSON.stringify(updatedLogs));
+    } catch (error) {
+      console.error('Error saving activity log:', error);
+    }
+  }, [currentUser, activityLogs]);
+
+  // ============ VENDOR APPLICATIONS (Local placeholder) ============
+
   const approveVendor = useCallback(async (applicationId, notes = '') => {
     try {
       const app = vendorApplications.find(a => a.id === applicationId);
@@ -256,7 +323,6 @@ export function AdminProvider({ children }) {
         throw new Error('Application not found');
       }
 
-      // Update application status
       const updatedApps = vendorApplications.map(a =>
         a.id === applicationId
           ? { ...a, status: 'approved', reviewedAt: new Date().toISOString(), notes }
@@ -264,25 +330,6 @@ export function AdminProvider({ children }) {
       );
       setVendorApplications(updatedApps);
       await AsyncStorage.setItem(STORAGE_KEYS.VENDOR_APPS, JSON.stringify(updatedApps));
-
-      // Create vendor user account
-      const vendorUser = {
-        id: `vendor-${Date.now()}`,
-        email: app.email,
-        password: 'vendor123', // Default password
-        name: app.ownerName,
-        role: 'vendor',
-        status: 'active',
-        phone: app.phone,
-        businessName: app.businessName,
-        avatar: null,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: null,
-      };
-
-      const updatedUsers = [...users, vendorUser];
-      setUsers(updatedUsers);
-      await AsyncStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
 
       await logActivity(
         ACTIVITY_ACTIONS.VENDOR_APPROVE,
@@ -296,9 +343,8 @@ export function AdminProvider({ children }) {
     } catch (error) {
       throw error;
     }
-  }, [vendorApplications, users, logActivity]);
+  }, [vendorApplications, logActivity]);
 
-  // Reject vendor
   const rejectVendor = useCallback(async (applicationId, reason = '') => {
     try {
       const app = vendorApplications.find(a => a.id === applicationId);
@@ -328,9 +374,8 @@ export function AdminProvider({ children }) {
     }
   }, [vendorApplications, logActivity]);
 
-  // SYSTEM SETTINGS
+  // ============ SYSTEM SETTINGS (Local) ============
 
-  // Update settings
   const updateSettings = useCallback(async (section, updates) => {
     try {
       const updatedSettings = {
@@ -354,7 +399,6 @@ export function AdminProvider({ children }) {
     }
   }, [settings, logActivity]);
 
-  // Reset settings to default
   const resetSettings = useCallback(async () => {
     try {
       setSettings(defaultSettings);
@@ -372,9 +416,8 @@ export function AdminProvider({ children }) {
     }
   }, [logActivity]);
 
-  // ACTIVITY LOGS
+  // ============ ACTIVITY LOGS ============
 
-  // Clear activity logs
   const clearActivityLogs = useCallback(async () => {
     try {
       setActivityLogs([]);
@@ -384,7 +427,6 @@ export function AdminProvider({ children }) {
     }
   }, []);
 
-  // Get filtered activity logs
   const getFilteredLogs = useCallback((filters = {}) => {
     let filtered = [...activityLogs];
 
@@ -416,26 +458,35 @@ export function AdminProvider({ children }) {
   }, [activityLogs]);
 
   const value = {
+    // State
     users,
+    usersPagination,
     vendorApplications,
     settings,
     activityLogs,
     isLoading,
-    // User management
+    error,
+
+    // User management (API)
+    fetchUsers,
     createUser,
     updateUser,
     deleteUser,
     changeUserStatus,
-    // Vendor management
+
+    // Vendor management (local)
     approveVendor,
     rejectVendor,
-    // Settings
+
+    // Settings (local)
     updateSettings,
     resetSettings,
-    // Activity logs
+
+    // Activity logs (local)
     logActivity,
     clearActivityLogs,
     getFilteredLogs,
+
     // Utilities
     refreshData: initializeAdminData,
   };

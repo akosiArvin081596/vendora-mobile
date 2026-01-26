@@ -13,13 +13,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useProduct } from '../context/ProductContext';
+import { useProducts } from '../context/ProductContext';
 
 const { width } = Dimensions.get('window');
 const isWide = width >= 768;
 
 export default function ProductsScreen() {
-  const { userInventory, categories, refreshInventory, isLoading } = useProduct();
+  const { inventory, categories, fetchInventory, isLoading } = useProducts();
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -29,7 +29,7 @@ export default function ProductsScreen() {
   const [showAddModal, setShowAddModal] = useState(false);
 
   const filteredProducts = useMemo(() => {
-    let filtered = [...userInventory];
+    let filtered = [...inventory];
 
     // Search filter
     if (searchQuery) {
@@ -54,12 +54,12 @@ export default function ProductsScreen() {
     }
 
     return filtered;
-  }, [userInventory, searchQuery, selectedCategory]);
+  }, [inventory, searchQuery, selectedCategory]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    if (refreshInventory) {
-      await refreshInventory();
+    if (fetchInventory) {
+      await fetchInventory();
     }
     setRefreshing(false);
   };

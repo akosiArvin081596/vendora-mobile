@@ -19,6 +19,7 @@ import UserFormModal from './UserFormModal';
 const ROLE_FILTERS = [
   { id: 'all', label: 'All' },
   { id: ROLES.ADMIN, label: 'Admins' },
+  { id: ROLES.VENDOR, label: 'Vendors' },
   { id: ROLES.MANAGER, label: 'Managers' },
   { id: ROLES.CASHIER, label: 'Cashiers' },
   { id: ROLES.CUSTOMER, label: 'Customers' },
