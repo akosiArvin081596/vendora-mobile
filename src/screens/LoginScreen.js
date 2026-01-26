@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Animated,
+  StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,6 +22,28 @@ export default function LoginScreen({ onLoginSuccess }) {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
+
+  // Animation for the logo
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.05,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [pulseAnim]);
 
   const handleLogin = async () => {
     // Clear previous errors
@@ -63,17 +87,25 @@ export default function LoginScreen({ onLoginSuccess }) {
         >
           {/* Logo/Header */}
           <View className="items-center mb-10">
-            <View
-              className="w-20 h-20 bg-vendora-purple rounded-2xl items-center justify-center mb-4"
-              style={
-                Platform.OS === 'web'
-                  ? { boxShadow: '0px 4px 12px rgba(147, 51, 234, 0.35)' }
-                  : { elevation: 8 }
-              }
+            <Animated.View
+              style={[
+                logoStyles.logoContainer,
+                { transform: [{ scale: pulseAnim }] },
+              ]}
             >
-              <Ionicons name="cart" size={40} color="#fff" />
-            </View>
-            <Text className="text-vendora-text text-3xl font-bold">Vendora POS</Text>
+              {/* Outer ring */}
+              <View style={logoStyles.outerRing}>
+                {/* Inner circle with V */}
+                <View style={logoStyles.innerCircle}>
+                  <Text style={logoStyles.logoLetter}>V</Text>
+                </View>
+              </View>
+              {/* Shopping bag badge */}
+              <View style={logoStyles.iconBadge}>
+                <Ionicons name="bag-handle" size={16} color="#fff" />
+              </View>
+            </Animated.View>
+            <Text className="text-vendora-text text-3xl font-bold mt-4">Vendora POS</Text>
             <Text className="text-vendora-text-muted text-base mt-1">
               Sign in to continue
             </Text>
@@ -161,6 +193,9 @@ export default function LoginScreen({ onLoginSuccess }) {
             <Text className="text-vendora-text-muted text-sm">
               Point of Sale System
             </Text>
+            <Text className="text-vendora-purple text-xs mt-2 font-medium">
+              Vendora Technologies, Inc.
+            </Text>
             <Text className="text-vendora-text-muted text-xs mt-1">
               v1.0.0
             </Text>
@@ -170,3 +205,60 @@ export default function LoginScreen({ onLoginSuccess }) {
     </SafeAreaView>
   );
 }
+
+const logoStyles = StyleSheet.create({
+  logoContainer: {
+    position: 'relative',
+  },
+  outerRing: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: 'transparent',
+    borderWidth: 3,
+    borderColor: '#a855f7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#a855f7',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  innerCircle: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: '#1a1a24',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#2a2a3a',
+  },
+  logoLetter: {
+    fontSize: 38,
+    fontWeight: '700',
+    color: '#a855f7',
+    textShadowColor: '#a855f7',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
+  iconBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#a855f7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#1a1025',
+    shadowColor: '#a855f7',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+});

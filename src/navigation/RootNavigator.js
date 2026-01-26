@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { View, Animated, StyleSheet, Dimensions, ActivityIndicator, Text, Platform } from "react-native";
+import { View, Animated, StyleSheet, Dimensions, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import VendoraLoading from "../components/VendoraLoading";
 
 import { useAuth, ROLES } from "../context/AuthContext";
 import LoginScreen from "../screens/LoginScreen";
@@ -184,12 +185,7 @@ export default function RootNavigator() {
 
   // Show loading screen while initializing
   if (!isInitialized || isLoading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#9333ea" />
-        <Text style={styles.loadingText}>Loading...</Text>
-      </View>
-    );
+    return <VendoraLoading message="Loading..." />;
   }
 
   // Show login screen if not authenticated
@@ -203,12 +199,7 @@ export default function RootNavigator() {
 
   // Don't render anything until we have a screen to show
   if (!currentScreen) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#9333ea" />
-        <Text style={styles.loadingText}>Preparing your dashboard...</Text>
-      </View>
-    );
+    return <VendoraLoading message="Preparing your dashboard..." />;
   }
 
   const CurrentScreenComponent = SCREENS[currentScreen];
@@ -242,22 +233,5 @@ const styles = StyleSheet.create({
   },
   screenContainer: {
     flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: '#1a1025',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    color: '#9ca3af',
-    marginTop: 16,
-    fontSize: 16,
-  },
-  backButtonContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
   },
 });
