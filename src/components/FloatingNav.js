@@ -9,37 +9,48 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { PERMISSIONS } from '../utils/permissions';
 
-const NAV_ITEMS = [
-  { name: 'POS', icon: 'cart-outline', activeIcon: 'cart', permission: PERMISSIONS.POS_ACCESS },
-  { name: 'Store', icon: 'storefront-outline', activeIcon: 'storefront', permission: null }, // Public
-  { name: 'Inventory', icon: 'cube-outline', activeIcon: 'cube', permission: PERMISSIONS.INVENTORY_ACCESS },
-  { name: 'Orders', icon: 'receipt-outline', activeIcon: 'receipt', permission: PERMISSIONS.ORDERS_ACCESS },
-  { name: 'Reports', icon: 'bar-chart-outline', activeIcon: 'bar-chart', permission: PERMISSIONS.REPORTS_ACCESS },
-  { name: 'Settings', icon: 'settings-outline', activeIcon: 'settings', permission: null }, // Public
-  { name: 'Admin', icon: 'shield-outline', activeIcon: 'shield', permission: PERMISSIONS.ADMIN_PANEL_ACCESS },
-];
+// Navigation item configuration with icons
+const NAV_ITEM_CONFIG = {
+  POS: { icon: 'cart-outline', activeIcon: 'cart', label: 'POS' },
+  Dashboard: { icon: 'grid-outline', activeIcon: 'grid', label: 'Dashboard' },
+  Sales: { icon: 'trending-up-outline', activeIcon: 'trending-up', label: 'Sales' },
+  Inventory: { icon: 'cube-outline', activeIcon: 'cube', label: 'Inventory' },
+  Products: { icon: 'pricetag-outline', activeIcon: 'pricetag', label: 'Products' },
+  Orders: { icon: 'receipt-outline', activeIcon: 'receipt', label: 'Orders' },
+  Reports: { icon: 'bar-chart-outline', activeIcon: 'bar-chart', label: 'Reports' },
+  Settings: { icon: 'settings-outline', activeIcon: 'settings', label: 'Settings' },
+  Store: { icon: 'storefront-outline', activeIcon: 'storefront', label: 'Store' },
+  Admin: { icon: 'shield-outline', activeIcon: 'shield', label: 'Admin' },
+};
 
-export default function FloatingNav({ currentScreen, onNavigate }) {
-  const { checkPermission, isAuthenticated, currentUser } = useAuth();
+export default function FloatingNav({
+  currentScreen,
+  onNavigate,
+  isAuthenticated,
+  currentUser,
+  availableScreens = [],
+}) {
+  const { logout } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [hoveredItem, setHoveredItem] = useState(null);
   const animation = useRef(new Animated.Value(0)).current;
   const fabOpacity = useRef(new Animated.Value(0.4)).current;
   const fadeTimeout = useRef(null);
 
-  // Filter nav items based on user permissions
-  const visibleNavItems = useMemo(() => {
-    return NAV_ITEMS.filter((item) => {
-      // If no permission required, show to everyone
-      if (!item.permission) return true;
-      // If user is not authenticated, hide permission-gated items
-      if (!isAuthenticated) return false;
-      // Check if user has the required permission
-      return checkPermission(item.permission);
-    });
-  }, [isAuthenticated, checkPermission]);
+  // Build navigation items from available screens
+  const navItems = useMemo(() => {
+    return availableScreens
+      .map((screenName) => {
+        const config = NAV_ITEM_CONFIG[screenName];
+        if (!config) return null;
+        return {
+          name: screenName,
+          ...config,
+        };
+      })
+      .filter(Boolean);
+  }, [availableScreens]);
 
   // Fade out FAB after inactivity
   useEffect(() => {
@@ -108,10 +119,20 @@ export default function FloatingNav({ currentScreen, onNavigate }) {
     closeMenu();
   };
 
+  const handleLogout = async () => {
+    closeMenu();
+    await logout();
+  };
+
   const rotation = animation.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '45deg'],
   });
+
+  // Calculate the base offset (start above the FAB)
+  const baseOffset = 70;
+  // Calculate spacing between items
+  const itemSpacing = 55;
 
   return (
     <>
@@ -127,10 +148,57 @@ export default function FloatingNav({ currentScreen, onNavigate }) {
       {/* Navigation Items */}
       {isOpen ? (
         <View style={styles.navItemsContainer}>
-          {visibleNavItems.map((item, index) => {
+          {/* Logout button at the top */}
+          {isAuthenticated ? (
+            <Animated.View
+              style={[
+                styles.navItem,
+                {
+                  transform: [
+                    {
+                      translateY: animation.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, -(baseOffset + navItems.length * itemSpacing)],
+                      }),
+                    },
+                    {
+                      scale: animation.interpolate({
+                        inputRange: [0, 0.5, 1],
+                        outputRange: [0, 0.5, 1],
+                      }),
+                    },
+                  ],
+                  opacity: animation.interpolate({
+                    inputRange: [0, 0.5, 1],
+                    outputRange: [0, 0, 1],
+                  }),
+                },
+              ]}
+            >
+              {Platform.OS === 'web' && hoveredItem === 'logout' ? (
+                <View style={styles.tooltip}>
+                  <Text style={styles.tooltipText}>Logout</Text>
+                </View>
+              ) : null}
+              <TouchableOpacity
+                style={[styles.navButton, styles.logoutButton]}
+                onPress={handleLogout}
+                activeOpacity={0.8}
+                {...(Platform.OS === 'web' && {
+                  onMouseEnter: () => setHoveredItem('logout'),
+                  onMouseLeave: () => setHoveredItem(null),
+                })}
+              >
+                <Ionicons name="log-out-outline" size={24} color="#ef4444" />
+              </TouchableOpacity>
+            </Animated.View>
+          ) : null}
+
+          {/* Navigation items */}
+          {navItems.map((item, index) => {
             const translateY = animation.interpolate({
               inputRange: [0, 1],
-              outputRange: [0, -(70 + index * 60)],
+              outputRange: [0, -(baseOffset + index * itemSpacing)],
             });
 
             const scale = animation.interpolate({
@@ -144,7 +212,6 @@ export default function FloatingNav({ currentScreen, onNavigate }) {
             });
 
             const isActive = currentScreen === item.name;
-
             const isHovered = hoveredItem === item.name;
 
             return (
@@ -161,7 +228,7 @@ export default function FloatingNav({ currentScreen, onNavigate }) {
                 {/* Tooltip label */}
                 {Platform.OS === 'web' && isHovered ? (
                   <View style={styles.tooltip}>
-                    <Text style={styles.tooltipText}>{item.name}</Text>
+                    <Text style={styles.tooltipText}>{item.label}</Text>
                   </View>
                 ) : null}
                 <TouchableOpacity
@@ -197,9 +264,14 @@ export default function FloatingNav({ currentScreen, onNavigate }) {
               <View style={styles.userAvatar}>
                 <Ionicons name="person" size={14} color="#a855f7" />
               </View>
-              <Text style={styles.userName} numberOfLines={1}>
-                {currentUser.name || currentUser.email?.split('@')[0] || 'User'}
-              </Text>
+              <View style={styles.userInfo}>
+                <Text style={styles.userName} numberOfLines={1}>
+                  {currentUser.name || currentUser.email?.split('@')[0] || 'User'}
+                </Text>
+                <Text style={styles.userRole} numberOfLines={1}>
+                  {currentUser.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : ''}
+                </Text>
+              </View>
             </View>
           ) : null}
 
@@ -226,7 +298,7 @@ export default function FloatingNav({ currentScreen, onNavigate }) {
 const styles = StyleSheet.create({
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(0,0,0,0.3)',
     zIndex: 998,
   },
   navItemsContainer: {
@@ -273,11 +345,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#a855f7',
   },
+  userInfo: {
+    maxWidth: 100,
+  },
   userName: {
     color: '#e5e5e5',
     fontSize: 13,
     fontWeight: '600',
-    maxWidth: 100,
+  },
+  userRole: {
+    color: '#a855f7',
+    fontSize: 10,
+    fontWeight: '500',
+    textTransform: 'capitalize',
   },
   fab: {
     width: 60,
@@ -311,6 +391,10 @@ const styles = StyleSheet.create({
   navButtonActive: {
     backgroundColor: '#a855f7',
     borderColor: '#a855f7',
+  },
+  logoutButton: {
+    borderColor: '#ef4444',
+    backgroundColor: '#2d1f3d',
   },
   tooltip: {
     position: 'absolute',

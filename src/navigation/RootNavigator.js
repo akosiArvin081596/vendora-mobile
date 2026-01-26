@@ -2,14 +2,17 @@ import React, { useState, useRef, useCallback, useEffect } from "react";
 import { View, Animated, StyleSheet, Dimensions, ActivityIndicator, Text, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { useAuth } from "../context/AuthContext";
+import { useAuth, ROLES } from "../context/AuthContext";
 import LoginScreen from "../screens/LoginScreen";
 import POSScreen from "../screens/POSScreen";
-import StoreScreen from "../screens/StoreScreen";
+import DashboardScreen from "../screens/DashboardScreen";
+import SalesScreen from "../screens/SalesScreen";
 import InventoryScreen from "../screens/InventoryScreen";
+import ProductsScreen from "../screens/ProductsScreen";
 import OrdersScreen from "../screens/OrdersScreen";
 import ReportsScreen from "../screens/ReportsScreen";
 import SettingsScreen from "../screens/SettingsScreen";
+import StoreScreen from "../screens/StoreScreen";
 import AdminScreen from "../screens/AdminScreen";
 import FloatingNav from "../components/FloatingNav";
 
@@ -17,99 +20,141 @@ const { width } = Dimensions.get('window');
 
 const SCREEN_KEY = "@vendora_current_screen";
 
-// Define which screens require authentication
-const PROTECTED_SCREENS = ['POS', 'Inventory', 'Orders', 'Reports', 'Settings', 'Admin'];
-const PUBLIC_SCREENS = ['Store'];
-
-const SCREEN_ORDER = ['POS', 'Store', 'Inventory', 'Orders', 'Reports', 'Settings', 'Admin'];
-
+// All available screens
 const SCREENS = {
   POS: POSScreen,
-  Store: StoreScreen,
+  Dashboard: DashboardScreen,
+  Sales: SalesScreen,
   Inventory: InventoryScreen,
+  Products: ProductsScreen,
   Orders: OrdersScreen,
   Reports: ReportsScreen,
   Settings: SettingsScreen,
+  Store: StoreScreen,
   Admin: AdminScreen,
+};
+
+// Screen order for vendor navigation (POS-focused)
+const VENDOR_SCREEN_ORDER = ['POS', 'Dashboard', 'Sales', 'Inventory', 'Products', 'Settings'];
+
+// Screen order for admin navigation (all screens)
+const ADMIN_SCREEN_ORDER = ['Admin', 'POS', 'Dashboard', 'Sales', 'Inventory', 'Products', 'Orders', 'Reports', 'Settings', 'Store'];
+
+// Default screen order (all screens)
+const ALL_SCREEN_ORDER = ['POS', 'Dashboard', 'Sales', 'Store', 'Inventory', 'Products', 'Orders', 'Reports', 'Settings', 'Admin'];
+
+// Get screen order based on user role
+const getScreenOrderForRole = (role) => {
+  if (!role) return ['Store']; // Unauthenticated users only see Store
+
+  const normalizedRole = typeof role === 'string' ? role.toLowerCase() : role;
+
+  switch (normalizedRole) {
+    case ROLES.ADMIN:
+      return ADMIN_SCREEN_ORDER;
+    case ROLES.VENDOR:
+      return VENDOR_SCREEN_ORDER;
+    case ROLES.MANAGER:
+      return ADMIN_SCREEN_ORDER;
+    case ROLES.CASHIER:
+      return ['POS', 'Sales', 'Orders', 'Settings'];
+    case ROLES.CUSTOMER:
+      return ['Store'];
+    default:
+      return ALL_SCREEN_ORDER;
+  }
+};
+
+// Get default screen after login based on role
+const getDefaultScreenForRole = (role) => {
+  if (!role) return 'Store';
+
+  const normalizedRole = typeof role === 'string' ? role.toLowerCase() : role;
+
+  switch (normalizedRole) {
+    case ROLES.ADMIN:
+      return 'Admin';
+    case ROLES.VENDOR:
+      return 'POS';
+    case ROLES.MANAGER:
+      return 'Admin';
+    case ROLES.CASHIER:
+      return 'POS';
+    case ROLES.CUSTOMER:
+      return 'Store';
+    default:
+      return 'POS';
+  }
 };
 
 export default function RootNavigator() {
   const { isAuthenticated, isLoading, isInitialized, currentUser } = useAuth();
 
-  const [currentScreen, setCurrentScreen] = useState("Store");
-  const [showLogin, setShowLogin] = useState(false);
-  const [pendingScreen, setPendingScreen] = useState(null);
+  const [currentScreen, setCurrentScreen] = useState(null);
+  const [hasLoggedInOnce, setHasLoggedInOnce] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
 
-  // Check if current screen requires auth
-  const isProtectedScreen = PROTECTED_SCREENS.includes(currentScreen);
+  // Get available screens based on user role
+  const availableScreens = getScreenOrderForRole(currentUser?.role);
 
-  // Load saved screen on mount
+  // Load saved screen on mount and when auth changes
   useEffect(() => {
     const loadSavedScreen = async () => {
       try {
         const savedScreen = await AsyncStorage.getItem(SCREEN_KEY);
-        if (savedScreen && SCREEN_ORDER.includes(savedScreen)) {
-          // If saved screen is protected and user is not authenticated, stay on Store
-          if (PROTECTED_SCREENS.includes(savedScreen) && !isAuthenticated) {
-            return;
+
+        if (isAuthenticated && currentUser) {
+          // User is logged in
+          setHasLoggedInOnce(true);
+
+          // Check if saved screen is available for this user's role
+          if (savedScreen && availableScreens.includes(savedScreen)) {
+            setCurrentScreen(savedScreen);
+          } else {
+            // Navigate to default screen for role
+            const defaultScreen = getDefaultScreenForRole(currentUser.role);
+            setCurrentScreen(defaultScreen);
           }
-          setCurrentScreen(savedScreen);
+        } else {
+          // Not authenticated - show nothing (login screen will be shown)
+          setCurrentScreen(null);
         }
       } catch (error) {
         console.log("Error loading saved screen:", error);
+        setCurrentScreen(null);
       }
     };
 
     if (isInitialized) {
       loadSavedScreen();
     }
-  }, [isInitialized, isAuthenticated]);
+  }, [isInitialized, isAuthenticated, currentUser?.role]);
 
   // Save screen when it changes
   useEffect(() => {
     const saveScreen = async () => {
-      try {
-        await AsyncStorage.setItem(SCREEN_KEY, currentScreen);
-      } catch (error) {
-        console.log("Error saving screen:", error);
+      if (currentScreen) {
+        try {
+          await AsyncStorage.setItem(SCREEN_KEY, currentScreen);
+        } catch (error) {
+          console.log("Error saving screen:", error);
+        }
       }
     };
     saveScreen();
   }, [currentScreen]);
 
-  // Handle navigation when auth state changes
-  useEffect(() => {
-    if (isInitialized) {
-      if (isAuthenticated && pendingScreen) {
-        // User just logged in, navigate to pending screen
-        handleNavigate(pendingScreen);
-        setPendingScreen(null);
-        setShowLogin(false);
-      } else if (!isAuthenticated && isProtectedScreen) {
-        // User logged out while on protected screen, go to Store
-        setCurrentScreen("Store");
-      }
-    }
-  }, [isAuthenticated, isInitialized]);
-
   const handleNavigate = useCallback((screenName) => {
-    if (screenName === currentScreen && !showLogin) return;
+    if (screenName === currentScreen) return;
 
-    // Check if trying to access protected screen without auth
-    if (PROTECTED_SCREENS.includes(screenName) && !isAuthenticated) {
-      setPendingScreen(screenName);
-      setShowLogin(true);
+    // Only allow navigation to screens available for the user's role
+    if (!availableScreens.includes(screenName)) {
+      console.log(`Screen ${screenName} not available for role ${currentUser?.role}`);
       return;
     }
 
-    // Hide login if showing
-    if (showLogin) {
-      setShowLogin(false);
-    }
-
-    const currentIndex = SCREEN_ORDER.indexOf(currentScreen);
-    const nextIndex = SCREEN_ORDER.indexOf(screenName);
+    const currentIndex = availableScreens.indexOf(currentScreen);
+    const nextIndex = availableScreens.indexOf(screenName);
     const direction = nextIndex > currentIndex ? -1 : 1;
 
     // Set starting position for new screen
@@ -124,28 +169,18 @@ export default function RootNavigator() {
       duration: 400,
       useNativeDriver: Platform.OS !== 'web',
     }).start();
-  }, [currentScreen, showLogin, isAuthenticated]);
+  }, [currentScreen, availableScreens, currentUser?.role]);
 
   const handleLoginSuccess = useCallback((user) => {
-    // Navigate to pending screen or POS
-    const targetScreen = pendingScreen || 'POS';
-    setPendingScreen(null);
-    setShowLogin(false);
+    setHasLoggedInOnce(true);
+    // Navigate to default screen for the user's role
+    const defaultScreen = getDefaultScreenForRole(user?.role);
 
     // Small delay to ensure state updates
     setTimeout(() => {
-      handleNavigate(targetScreen);
+      setCurrentScreen(defaultScreen);
     }, 100);
-  }, [pendingScreen, handleNavigate]);
-
-  const handleCancelLogin = useCallback(() => {
-    setShowLogin(false);
-    setPendingScreen(null);
-    // If on a protected screen, go back to Store
-    if (isProtectedScreen) {
-      setCurrentScreen("Store");
-    }
-  }, [isProtectedScreen]);
+  }, []);
 
   // Show loading screen while initializing
   if (!isInitialized || isLoading) {
@@ -157,11 +192,21 @@ export default function RootNavigator() {
     );
   }
 
-  // Show login screen if required
-  if (showLogin) {
+  // Show login screen if not authenticated
+  if (!isAuthenticated) {
     return (
       <View style={styles.container}>
         <LoginScreen onLoginSuccess={handleLoginSuccess} />
+      </View>
+    );
+  }
+
+  // Don't render anything until we have a screen to show
+  if (!currentScreen) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#9333ea" />
+        <Text style={styles.loadingText}>Preparing your dashboard...</Text>
       </View>
     );
   }
@@ -184,6 +229,7 @@ export default function RootNavigator() {
         onNavigate={handleNavigate}
         isAuthenticated={isAuthenticated}
         currentUser={currentUser}
+        availableScreens={availableScreens}
       />
     </View>
   );

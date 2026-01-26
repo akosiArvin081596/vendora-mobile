@@ -19,6 +19,7 @@ const normalizeUser = (user) => {
 const ROLE_HIERARCHY = {
   [ROLES.ADMIN]: 4,
   [ROLES.MANAGER]: 3,
+  [ROLES.VENDOR]: 2,
   [ROLES.CASHIER]: 2,
   [ROLES.CUSTOMER]: 0,
 };
@@ -154,13 +155,17 @@ export function AuthProvider({ children }) {
   // Check if user is admin
   const isAdmin = currentUser?.role === ROLES.ADMIN;
 
+  // Check if user is vendor
+  const isVendor = currentUser?.role === ROLES.VENDOR;
+
   // Check if user is manager or admin
   const isManagerOrAbove = hasRole(ROLES.MANAGER);
 
   // Check if user can access POS
   const canAccessPOS = currentUser?.role === ROLES.ADMIN ||
     currentUser?.role === ROLES.MANAGER ||
-    currentUser?.role === ROLES.CASHIER;
+    currentUser?.role === ROLES.CASHIER ||
+    currentUser?.role === ROLES.VENDOR;
 
   // Clear error
   const clearError = useCallback(() => {
@@ -177,6 +182,7 @@ export function AuthProvider({ children }) {
     // Computed
     isAuthenticated,
     isAdmin,
+    isVendor,
     isManagerOrAbove,
     canAccessPOS,
 
