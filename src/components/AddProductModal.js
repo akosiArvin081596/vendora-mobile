@@ -280,7 +280,11 @@ export default function AddProductModal({
       description: description.trim() || undefined,
       is_active: isActive,
       is_ecommerce: isEcommerce,
-      image: image.trim() || null,
+      image: isEditing
+        ? (image.trim() === (existingProduct?.image || '')
+          ? undefined               // unchanged — don't send
+          : (image.trim() || null)) // new file URI or null to clear
+        : (image.trim() || undefined),
       bulk_pricing: hasBulkPricing
         ? bulkPricing
             .filter((tier) => tier.minQty && tier.price && parseInt(tier.minQty, 10) >= 2)
