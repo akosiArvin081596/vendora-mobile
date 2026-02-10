@@ -18,9 +18,7 @@ import { ROLES, getRoleDisplayName, canManageUser, PERMISSIONS } from '../../uti
 
 const AVAILABLE_ROLES = [
   { id: ROLES.ADMIN, label: 'Administrator' },
-  { id: ROLES.MANAGER, label: 'Manager' },
-  { id: ROLES.CASHIER, label: 'Cashier' },
-  { id: ROLES.CUSTOMER, label: 'Customer' },
+  { id: ROLES.VENDOR, label: 'Vendor' },
 ];
 
 export default function UserFormModal({ visible, onClose, user }) {
