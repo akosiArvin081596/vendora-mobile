@@ -5,7 +5,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  Pressable,
   Alert,
   ScrollView,
   KeyboardAvoidingView,
@@ -329,11 +328,13 @@ export default function AddProductModal({
           activeOpacity={1}
           onPress={onClose}
         >
-          <Pressable
-            className="bg-vendora-card rounded-3xl w-full max-w-md max-h-[90%]"
+          <TouchableOpacity
+            activeOpacity={1}
+            className="bg-vendora-card rounded-3xl w-full max-w-lg overflow-hidden"
+            style={{ maxHeight: '85%' }}
             onPress={(e) => e.stopPropagation()}
           >
-            <ScrollView className="flex-1 p-6 pb-0" showsVerticalScrollIndicator={false}>
+            <ScrollView className="p-6 pb-0" showsVerticalScrollIndicator={false}>
               {/* Header */}
               <View className="flex-row items-center justify-between mb-5">
                 <View className="flex-row items-center gap-3">
@@ -861,7 +862,7 @@ export default function AddProductModal({
                 </Text>
               </TouchableOpacity>
             </View>
-          </Pressable>
+          </TouchableOpacity>
         </TouchableOpacity>
 
         {/* Unit Picker Modal */}

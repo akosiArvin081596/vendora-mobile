@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import orderService from '../services/orderService';
+import { useAuth } from './AuthContext';
 
 const OrderContext = createContext();
 
@@ -56,6 +57,7 @@ const mapBackendOrder = (order) => {
 };
 
 export function OrderProvider({ children }) {
+  const { currentUser } = useAuth();
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -79,10 +81,14 @@ export function OrderProvider({ children }) {
     }
   }, [orders]);
 
-  // Load orders on mount
+  // Load orders when user is authenticated
   useEffect(() => {
-    fetchOrders();
-  }, []);
+    if (currentUser) {
+      fetchOrders();
+    } else {
+      setOrders([]);
+    }
+  }, [currentUser]);
 
   // Add a new order via backend API, then create payment
   const addOrder = useCallback(async (orderData) => {
