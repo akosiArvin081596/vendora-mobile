@@ -196,7 +196,7 @@ export default function StoreCartSheet({
                         {item.unit}
                       </Text>
                       <Text style={{ color: '#c084fc', fontWeight: '700', fontSize: 18 }}>
-                        ₱ {item.price.toLocaleString()}
+                        ₱ {formatCurrency(item.price)}
                       </Text>
                     </View>
 

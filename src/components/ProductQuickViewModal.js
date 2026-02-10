@@ -9,6 +9,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { formatCurrency } from '../utils/checkoutHelpers';
 import { useReviews } from '../context/ReviewContext';
 
 export default function ProductQuickViewModal({
@@ -207,15 +208,15 @@ export default function ProductQuickViewModal({
               {/* Price */}
               <View className="flex-row items-center gap-3 mb-4">
                 <Text className="text-vendora-purple-light font-bold text-3xl">
-                  ₱ {product.price.toLocaleString()}
+                  ₱ {formatCurrency(product.price)}
                 </Text>
                 {isOnSale && (
                   <View className="flex-row items-center gap-2">
                     <Text className="text-vendora-text-muted text-xl line-through">
-                      ₱ {product.originalPrice.toLocaleString()}
+                      ₱ {formatCurrency(product.originalPrice)}
                     </Text>
                     <View className="bg-red-500 px-2 py-1 rounded">
-                      <Text className="text-white text-xs font-bold">SAVE ₱{(product.originalPrice - product.price).toLocaleString()}</Text>
+                      <Text className="text-white text-xs font-bold">SAVE ₱{formatCurrency(product.originalPrice - product.price)}</Text>
                     </View>
                   </View>
                 )}
@@ -315,7 +316,7 @@ export default function ProductQuickViewModal({
                   ? 'Out of Stock'
                   : maxQuantity <= 0
                   ? 'Max in Cart'
-                  : `Add ${quantity} to Cart - ₱ ${(product.price * quantity).toLocaleString()}`}
+                  : `Add ${quantity} to Cart - ₱ ${formatCurrency(product.price * quantity)}`}
               </Text>
             </TouchableOpacity>
           </View>

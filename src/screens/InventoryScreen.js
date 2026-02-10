@@ -13,8 +13,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useProducts } from '../context/ProductContext';
+import { formatCurrency } from '../utils/checkoutHelpers';
 import StockUpdateModal from '../components/StockUpdateModal';
 import AddProductModal from '../components/AddProductModal';
+import ProductHistoryModal from '../components/ProductHistoryModal';
 import Toast from '../components/Toast';
 
 export default function InventoryScreen() {
@@ -42,6 +44,8 @@ export default function InventoryScreen() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [editingProduct, setEditingProduct] = useState(null);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [historyProduct, setHistoryProduct] = useState(null);
   const [toast, setToast] = useState({ visible: false, message: '', type: 'success' });
 
   // Fetch user's inventory on mount
@@ -129,6 +133,11 @@ export default function InventoryScreen() {
   const handleCloseAddModal = () => {
     setShowAddModal(false);
     setEditingProduct(null);
+  };
+
+  const handleOpenHistoryModal = (product) => {
+    setHistoryProduct(product);
+    setShowHistoryModal(true);
   };
 
   const getStockStatusColor = (stock) => {
@@ -397,7 +406,7 @@ export default function InventoryScreen() {
                       <View>
                         <Text style={{ color: '#9ca3af', fontSize: 12 }}>Price</Text>
                         <Text style={{ color: '#e5e5e5', fontWeight: 'bold', fontSize: 18 }}>
-                          ₱{(product.price || 0).toLocaleString()}
+                          ₱{formatCurrency(product.price || 0)}
                         </Text>
                       </View>
                       <View className={`px-2 py-1 rounded-lg ${
@@ -451,6 +460,12 @@ export default function InventoryScreen() {
                     <Text style={{ color: '#9ca3af', fontWeight: '500' }}>Edit</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
+                    className="bg-blue-500/20 px-4 py-2.5 rounded-xl"
+                    onPress={() => handleOpenHistoryModal(product)}
+                  >
+                    <Ionicons name="time-outline" size={18} color="#3b82f6" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
                     className="bg-red-500/20 px-4 py-2.5 rounded-xl"
                     onPress={() => handleDeleteProduct(product)}
                   >
@@ -490,7 +505,7 @@ export default function InventoryScreen() {
 
                     {/* Price */}
                     <Text style={{ color: '#e5e5e5', fontWeight: '600', fontSize: 14, marginTop: 8 }}>
-                      ₱{(product.price || 0).toLocaleString()}
+                      ₱{formatCurrency(product.price || 0)}
                     </Text>
 
                     {/* Bulk Pricing Badge */}
@@ -516,6 +531,12 @@ export default function InventoryScreen() {
                         onPress={() => handleEditProduct(product)}
                       >
                         <Ionicons name="create-outline" size={18} color="#9ca3af" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        className="flex-1 bg-blue-500/20 py-2 rounded-lg items-center"
+                        onPress={() => handleOpenHistoryModal(product)}
+                      >
+                        <Ionicons name="time-outline" size={18} color="#3b82f6" />
                       </TouchableOpacity>
                       <TouchableOpacity
                         className="flex-1 bg-red-500/20 py-2 rounded-lg items-center"
@@ -558,6 +579,16 @@ export default function InventoryScreen() {
         }}
         product={selectedProduct}
         onUpdateStock={adjustStock}
+      />
+
+      {/* Product History Modal */}
+      <ProductHistoryModal
+        visible={showHistoryModal}
+        onClose={() => {
+          setShowHistoryModal(false);
+          setHistoryProduct(null);
+        }}
+        product={historyProduct}
       />
 
       {/* Add/Edit Product Modal */}

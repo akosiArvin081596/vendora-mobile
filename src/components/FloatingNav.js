@@ -16,6 +16,7 @@ const NAV_ITEM_CONFIG = {
   Dashboard: { icon: 'grid-outline', activeIcon: 'grid', label: 'Dashboard' },
   Sales: { icon: 'trending-up-outline', activeIcon: 'trending-up', label: 'Sales' },
   Inventory: { icon: 'cube-outline', activeIcon: 'cube', label: 'Inventory' },
+  Ledger: { icon: 'book-outline', activeIcon: 'book', label: 'Ledger' },
   Products: { icon: 'pricetag-outline', activeIcon: 'pricetag', label: 'Products' },
   Orders: { icon: 'receipt-outline', activeIcon: 'receipt', label: 'Orders' },
   Reports: { icon: 'bar-chart-outline', activeIcon: 'bar-chart', label: 'Reports' },

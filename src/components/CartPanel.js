@@ -129,7 +129,7 @@ export default function CartPanel({
               {/* Bottom Row: Price and Quantity */}
               <View className="flex-row items-center justify-between">
                 <Text className="text-vendora-purple-light font-semibold text-sm">
-                  ₱ {item.price.toLocaleString()}
+                  ₱ {formatCurrency(item.price)}
                 </Text>
                 <View className="flex-row items-center gap-1">
                   <TouchableOpacity

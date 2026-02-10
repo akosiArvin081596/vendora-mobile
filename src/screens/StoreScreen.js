@@ -31,6 +31,7 @@ import SortFilterModal from '../components/SortFilterModal';
 import LoginModal from '../components/LoginModal';
 import ProfileModal from '../components/ProfileModal';
 import VendoraLoading from '../components/VendoraLoading';
+import { formatCurrency } from '../utils/checkoutHelpers';
 import { useAuth } from '../context/AuthContext';
 
 export default function StoreScreen() {
@@ -41,7 +42,7 @@ export default function StoreScreen() {
   // Calculate card width: (screen width - horizontal padding - gaps between cards) / numColumns
   const cardWidth = (width - 16 - (numColumns * 12)) / numColumns;
 
-  const { publicProducts, categories, decrementStockAfterSale, fetchProducts, isLoadingProducts } = useProducts();
+  const { publicProducts, categories, fetchProducts, isLoadingProducts } = useProducts();
 
   // Fetch all public products on mount (e-commerce view)
   useEffect(() => {
@@ -285,13 +286,21 @@ export default function StoreScreen() {
     setShowCheckout(true);
   }, [cart.length]);
 
-  const handleCheckoutComplete = useCallback((data) => {
-    decrementStockAfterSale(cart);
-    addOrder(data);
-    setReceiptData(data);
-    setShowCheckout(false);
-    setShowReceipt(true);
-  }, [cart, decrementStockAfterSale, addOrder]);
+  const handleCheckoutComplete = useCallback(async (data) => {
+    try {
+      // Create order + payment on backend (also decrements stock & creates ledger entries)
+      await addOrder(data);
+
+      // Refresh products to reflect stock changes from backend
+      await fetchProducts({ forceRefresh: true });
+
+      setReceiptData(data);
+      setShowCheckout(false);
+      setShowReceipt(true);
+    } catch (error) {
+      Alert.alert('Order Failed', error.message || 'Failed to create order. Please try again.');
+    }
+  }, [addOrder, fetchProducts]);
 
   const handleNewTransaction = useCallback(() => {
     setCart([]);
@@ -788,7 +797,7 @@ export default function StoreScreen() {
               <Text className="text-white font-medium">View Cart</Text>
             </View>
             <Text className="text-white text-lg font-bold">
-              ₱ {subtotal.toLocaleString()}
+              ₱ {formatCurrency(subtotal)}
             </Text>
           </TouchableOpacity>
         </View>

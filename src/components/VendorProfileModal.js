@@ -50,8 +50,8 @@ const MENU_ITEMS = [
 export default function VendorProfileModal({ visible, onClose, user }) {
   const [activeTab, setActiveTab] = useState('dashboard');
 
-  const formatCurrency = (amount) => {
-    return '₱' + amount.toLocaleString();
+  const formatMoney = (amount) => {
+    return '₱' + amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
   const handleQuickAction = () => {
@@ -212,7 +212,7 @@ export default function VendorProfileModal({ visible, onClose, user }) {
                     <Ionicons name="trending-up" size={22} color="#22c55e" />
                   </View>
                   <Text style={{ color: '#22c55e', fontSize: 22, fontWeight: 'bold' }}>
-                    {formatCurrency(SAMPLE_STATS.thisMonthSales)}
+                    {formatMoney(SAMPLE_STATS.thisMonthSales)}
                   </Text>
                   <Text style={{ color: '#9ca3af', fontSize: 12 }}>Total Sales</Text>
                 </View>
@@ -255,7 +255,7 @@ export default function VendorProfileModal({ visible, onClose, user }) {
               }}>
                 <View style={{ flex: 1, alignItems: 'center' }}>
                   <Text style={{ color: '#e5e5e5', fontSize: 18, fontWeight: 'bold' }}>
-                    {formatCurrency(SAMPLE_STATS.totalSales)}
+                    {formatMoney(SAMPLE_STATS.totalSales)}
                   </Text>
                   <Text style={{ color: '#9ca3af', fontSize: 11 }}>Total Sales</Text>
                 </View>

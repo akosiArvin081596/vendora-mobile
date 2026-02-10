@@ -20,6 +20,8 @@ import {
 } from '../utils/receiptHelpers';
 import ActionSheet from './ActionSheet';
 import PrintableReceipt from './PrintableReceipt';
+import BluetoothPrinterModal from './BluetoothPrinterModal';
+import thermalPrinterService from '../services/thermalPrinterService';
 
 const PAYMENT_METHOD_LABELS = {
   cash: 'Cash',
@@ -37,6 +39,7 @@ export default function ReceiptModal({
   const [showPrintOptions, setShowPrintOptions] = useState(false);
   const [showShareOptions, setShowShareOptions] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showPrinterModal, setShowPrinterModal] = useState(false);
   const printableReceiptRef = useRef(null);
 
   if (!receiptData) return null;
@@ -84,12 +87,47 @@ export default function ReceiptModal({
     }
   };
 
-  const handleThermalPrinter = () => {
+  const handleThermalPrinter = async () => {
     setShowPrintOptions(false);
-    Alert.alert(
-      'Coming Soon',
-      'Thermal printer support will be available in a future update.'
-    );
+
+    if (!thermalPrinterService.isAvailable()) {
+      Alert.alert(
+        'Not Available',
+        'Bluetooth printer module is not available. Please use a development build instead of Expo Go.'
+      );
+      return;
+    }
+
+    const lastPrinter = await thermalPrinterService.getLastPrinter();
+    if (!lastPrinter) {
+      setShowPrinterModal(true);
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      await thermalPrinterService.connect(lastPrinter);
+      await thermalPrinterService.printReceipt(receiptData);
+      Alert.alert('Success', 'Receipt printed successfully.');
+    } catch (error) {
+      Alert.alert('Print Error', error.message || 'Failed to print. Try reconnecting the printer.');
+      setShowPrinterModal(true);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handlePrinterConnected = async () => {
+    setShowPrinterModal(false);
+    setIsProcessing(true);
+    try {
+      await thermalPrinterService.printReceipt(receiptData);
+      Alert.alert('Success', 'Receipt printed successfully.');
+    } catch (error) {
+      Alert.alert('Print Error', error.message || 'Failed to print receipt.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleShareAsImage = async () => {
@@ -138,8 +176,7 @@ export default function ReceiptModal({
       id: 'thermal',
       label: 'Thermal Printer',
       icon: 'print-outline',
-      subtitle: 'Connect to receipt printer',
-      disabled: true,
+      subtitle: 'Print via Bluetooth printer',
       onPress: handleThermalPrinter,
     },
   ];
@@ -367,6 +404,13 @@ export default function ReceiptModal({
           />
         </View>
       </Modal>
+
+      {/* Bluetooth Printer Modal */}
+      <BluetoothPrinterModal
+        visible={showPrinterModal}
+        onClose={() => setShowPrinterModal(false)}
+        onConnected={handlePrinterConnected}
+      />
 
       {/* Hidden Printable Receipt for Image Capture */}
       <View style={{ position: 'absolute', left: -1000, top: -1000 }}>

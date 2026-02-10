@@ -19,12 +19,14 @@ export default function StockUpdateModal({
 }) {
   const [adjustmentType, setAdjustmentType] = useState('add');
   const [quantity, setQuantity] = useState('');
+  const [unitCost, setUnitCost] = useState('');
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
     if (visible) {
       setAdjustmentType('add');
       setQuantity('');
+      setUnitCost('');
       setNotes('');
     }
   }, [visible]);
@@ -36,6 +38,11 @@ export default function StockUpdateModal({
       return;
     }
 
+    if (adjustmentType === 'add' && unitCost.trim() && (isNaN(parseFloat(unitCost)) || parseFloat(unitCost) < 0)) {
+      Alert.alert('Invalid Cost', 'Please enter a valid unit cost');
+      return;
+    }
+
     const adjustment = adjustmentType === 'add' ? qty : -qty;
     const newStock = product.stock + adjustment;
 
@@ -44,7 +51,8 @@ export default function StockUpdateModal({
       return;
     }
 
-    onUpdateStock(product.id, adjustment);
+    const costValue = adjustmentType === 'add' && unitCost.trim() ? parseFloat(unitCost) : null;
+    onUpdateStock(product.id, adjustment, notes, costValue);
     Alert.alert(
       'Stock Updated',
       `${product.name} stock ${adjustmentType === 'add' ? 'increased' : 'decreased'} by ${qty}. New stock: ${newStock}`
@@ -166,6 +174,26 @@ export default function StockUpdateModal({
               />
               <Text className="text-vendora-muted">{product.unit}</Text>
             </View>
+
+            {/* Unit Cost Input (only for Stock In) */}
+            {adjustmentType === 'add' && (
+              <>
+                <Text className="text-vendora-muted text-sm mb-2">Unit Cost / Acquisition Price (Optional)</Text>
+                <View className="flex-row items-center gap-3 bg-vendora-input rounded-xl px-4 py-3 mb-4">
+                  <Ionicons name="cash-outline" size={20} color="#a855f7" />
+                  <Text style={{ color: '#9ca3af', fontSize: 16 }}>₱</Text>
+                  <TextInput
+                    className="flex-1 text-lg"
+                    style={{ color: '#e5e5e5' }}
+                    placeholder="0.00"
+                    placeholderTextColor="#9ca3af"
+                    value={unitCost}
+                    onChangeText={setUnitCost}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              </>
+            )}
 
             {/* Notes Input */}
             <Text className="text-vendora-muted text-sm mb-2">Notes (Optional)</Text>

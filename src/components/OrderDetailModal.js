@@ -161,11 +161,11 @@ export default function OrderDetailModal({
                         {item.name}
                       </Text>
                       <Text className="text-vendora-text-muted text-sm">
-                        ₱ {item.price.toLocaleString()} x {item.quantity}
+                        ₱ {formatCurrency(item.price)} x {item.quantity}
                       </Text>
                     </View>
                     <Text className="text-vendora-text font-semibold">
-                      ₱ {(item.price * item.quantity).toLocaleString()}
+                      ₱ {formatCurrency(item.price * item.quantity)}
                     </Text>
                   </View>
                 ))}

@@ -5,6 +5,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  Pressable,
   Alert,
   ScrollView,
   KeyboardAvoidingView,
@@ -328,12 +329,11 @@ export default function AddProductModal({
           activeOpacity={1}
           onPress={onClose}
         >
-          <TouchableOpacity
-            activeOpacity={1}
+          <Pressable
             className="bg-vendora-card rounded-3xl w-full max-w-md max-h-[90%]"
             onPress={(e) => e.stopPropagation()}
           >
-            <ScrollView className="p-6" showsVerticalScrollIndicator={false}>
+            <ScrollView className="flex-1 p-6 pb-0" showsVerticalScrollIndicator={false}>
               {/* Header */}
               <View className="flex-row items-center justify-between mb-5">
                 <View className="flex-row items-center gap-3">
@@ -822,7 +822,12 @@ export default function AddProductModal({
                 </View>
               )}
 
-              {/* Submit Button */}
+              {/* Bottom spacing for scroll */}
+              <View className="h-4" />
+            </ScrollView>
+
+            {/* Submit Button - outside ScrollView so it's always visible */}
+            <View className="px-6 pb-6 pt-3">
               <TouchableOpacity
                 className={`py-4 rounded-2xl flex-row items-center justify-center gap-2 border ${
                   isEditing
@@ -855,11 +860,8 @@ export default function AddProductModal({
                   {isSubmitting ? 'Saving...' : isEditing ? 'Update Product' : 'Add Product'}
                 </Text>
               </TouchableOpacity>
-
-              {/* Bottom spacing for scroll */}
-              <View className="h-4" />
-            </ScrollView>
-          </TouchableOpacity>
+            </View>
+          </Pressable>
         </TouchableOpacity>
 
         {/* Unit Picker Modal */}

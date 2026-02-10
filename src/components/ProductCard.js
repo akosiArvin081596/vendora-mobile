@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { formatCurrency } from '../utils/checkoutHelpers';
 
 export default function ProductCard({
   product,
@@ -61,7 +62,7 @@ export default function ProductCard({
         {/* Price & Actions */}
         <View className="items-end">
           <Text className="text-vendora-purple-light font-bold text-lg mb-2">
-            ₱ {product.price.toLocaleString()}
+            ₱ {formatCurrency(product.price)}
           </Text>
 
           {cartQuantity > 0 ? (

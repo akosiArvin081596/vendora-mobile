@@ -144,7 +144,7 @@ export default function CartSheet({
                       {item.name}
                     </Text>
                     <Text className="text-vendora-purple-light font-semibold">
-                      ₱ {item.price.toLocaleString()}
+                      ₱ {formatCurrency(item.price)}
                     </Text>
                   </View>
                   <View className="flex-row items-center gap-2">

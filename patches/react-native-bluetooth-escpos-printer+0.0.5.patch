@@ -1,0 +1,95 @@
+diff --git a/node_modules/react-native-bluetooth-escpos-printer/android/build.gradle b/node_modules/react-native-bluetooth-escpos-printer/android/build.gradle
+index d86e4f5..6aee5c0 100644
+--- a/node_modules/react-native-bluetooth-escpos-printer/android/build.gradle
++++ b/node_modules/react-native-bluetooth-escpos-printer/android/build.gradle
+@@ -1,7 +1,7 @@
+ buildscript {
+     repositories {
+-        jcenter { url "http://jcenter.bintray.com/" }
+-        maven {url "http://repo.spring.io/plugins-release/"}
++        jcenter()
++        maven { url "https://repo.spring.io/plugins-release/" }
+         mavenCentral()
+         maven {
+             // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
+@@ -20,12 +20,12 @@ buildscript {
+ apply plugin: 'com.android.library'
+ 
+ android {
+-    compileSdkVersion 27
+-    buildToolsVersion "27.0.3"
++    compileSdkVersion 36
++    buildToolsVersion "36.0.0"
+ 
+     defaultConfig {
+-        minSdkVersion 16
+-        targetSdkVersion 24
++        minSdkVersion 24
++        targetSdkVersion 36
+         versionCode 1
+         versionName "1.0"
+     }
+@@ -40,8 +40,8 @@ android {
+ }
+ 
+ repositories {
+-    jcenter { url "http://jcenter.bintray.com/" }
+-    maven {url "http://repo.spring.io/plugins-release/"}
++    jcenter()
++    maven { url "https://repo.spring.io/plugins-release/" }
+     mavenCentral()
+     maven {
+         // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
+@@ -53,8 +53,8 @@ repositories {
+ }
+ 
+ dependencies {
+-    compile fileTree(dir: 'libs', include: ['*.jar'])
++    implementation fileTree(dir: 'libs', include: ['*.jar'])
+     implementation 'com.facebook.react:react-native:+'  // From node_modules
+-    implementation group: 'com.android.support', name: 'support-v4', version: '27.0.0'
++    implementation 'androidx.core:core:1.15.0'
+     implementation "com.google.zxing:core:3.3.0"
+ }
+\ No newline at end of file
+diff --git a/node_modules/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/RNBluetoothManagerModule.java b/node_modules/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/RNBluetoothManagerModule.java
+index dd5d33e..bcdf209 100644
+--- a/node_modules/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/RNBluetoothManagerModule.java
++++ b/node_modules/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/RNBluetoothManagerModule.java
+@@ -10,8 +10,8 @@ import android.content.Intent;
+ import android.content.IntentFilter;
+ import android.content.pm.PackageManager;
+ import android.os.Bundle;
+-import android.support.v4.app.ActivityCompat;
+-import android.support.v4.content.ContextCompat;
++import androidx.core.app.ActivityCompat;
++import androidx.core.content.ContextCompat;
+ import android.util.Log;
+ import android.widget.Toast;
+ import com.facebook.react.bridge.*;
+diff --git a/node_modules/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/escpos/RNBluetoothEscposPrinterModule.java b/node_modules/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/escpos/RNBluetoothEscposPrinterModule.java
+index 3fa7409..547c548 100644
+--- a/node_modules/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/escpos/RNBluetoothEscposPrinterModule.java
++++ b/node_modules/react-native-bluetooth-escpos-printer/android/src/main/java/cn/jystudio/bluetooth/escpos/RNBluetoothEscposPrinterModule.java
+@@ -434,6 +434,21 @@ public class RNBluetoothEscposPrinterModule extends ReactContextBaseJavaModule
+         sendDataByte(command);
+     }
+ 
++    @ReactMethod
++    public void openCashDrawer(int pin, final Promise promise) {
++        try {
++            byte p = (byte)(pin == 1 ? 0x01 : 0x00);
++            byte[] command = new byte[]{0x1B, 0x70, p, 0x19, 0x78};
++            if (sendDataByte(command)) {
++                promise.resolve(null);
++            } else {
++                promise.reject("COMMAND_NOT_SEND", "Failed to send cash drawer command");
++            }
++        } catch (Exception e) {
++            promise.reject(e.getMessage(), e);
++        }
++    }
++
+     private boolean sendDataByte(byte[] data) {
+         if (data==null || mService.getState() != BluetoothService.STATE_CONNECTED) {
+             return false;

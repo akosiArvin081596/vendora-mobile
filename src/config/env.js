@@ -2,7 +2,7 @@
 // Primary config is loaded from .env file (see .env.example for template)
 
 // Current environment - change this for different builds
-const CURRENT_ENV = process.env.EXPO_PUBLIC_ENV || 'development';
+const CURRENT_ENV = process.env.EXPO_PUBLIC_ENV || 'production';
 
 // Fallback values if .env is not configured
 const FALLBACK = {

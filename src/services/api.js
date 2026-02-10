@@ -167,7 +167,7 @@ api.interceptors.response.use(
         console.warn('API 401', {
           url: error?.config?.url,
           message: data?.error?.message || data?.message,
-          code: data?.error?.code,
+          code: resolveErrorCode(data, 'UNAUTHORIZED'),
         });
         const isLoginRequest = error?.config?.url?.includes('/auth/login');
         const authFallback = isLoginRequest

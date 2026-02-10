@@ -1,166 +1,140 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import orderService from '../services/orderService';
 
 const OrderContext = createContext();
 
-// Sample order data
-const today = new Date();
-const yesterday = new Date(today);
-yesterday.setDate(yesterday.getDate() - 1);
-const twoDaysAgo = new Date(today);
-twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
-const threeDaysAgo = new Date(today);
-threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+/**
+ * Map frontend payment method to backend-accepted values.
+ * Backend accepts: 'cash', 'card', 'online'
+ */
+const mapPaymentMethod = (method) => {
+  const methodMap = {
+    cash: 'cash',
+    card: 'card',
+    ewallet: 'online',
+    online: 'online',
+  };
+  return methodMap[method] || 'cash';
+};
 
-const INITIAL_ORDERS = [
-  {
-    id: 'TXN-20260116-A1B2',
-    transactionId: 'TXN-20260116-A1B2',
-    status: 'completed',
-    createdAt: new Date(today.setHours(10, 30, 0)),
-    customerName: 'Maria Santos',
-    items: [
-      { id: 1, name: 'Premium Rice 5kg', sku: 'GR-1001', unit: 'bag', price: 1250, quantity: 2 },
-      { id: 2, name: 'Cooking Oil 1L', sku: 'GR-1020', unit: 'bottle', price: 160, quantity: 3 },
-    ],
-    subtotal: 2980,
+/**
+ * Map a backend order (snake_case) to the frontend format used by
+ * OrdersScreen, ReceiptModal, etc.
+ */
+const mapBackendOrder = (order) => {
+  const items = (order.items || []).map((item) => ({
+    id: item.product_id,
+    name: item.product?.name || item.product_name || 'Unknown',
+    sku: item.product?.sku || item.sku || '',
+    unit: item.product?.unit || item.unit || 'pc',
+    price: item.price != null ? item.price / 100 : 0,
+    quantity: item.quantity,
+  }));
+
+  const total = order.total != null ? order.total / 100 : 0;
+  const subtotal = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+
+  return {
+    id: order.order_number || `ORD-${order.id}`,
+    backendId: order.id,
+    transactionId: order.order_number || `ORD-${order.id}`,
+    status: order.status,
+    createdAt: new Date(order.ordered_at || order.created_at),
+    customerName: order.customer?.name || 'Walk-in Customer',
+    items,
+    subtotal,
+    total,
     discount: 0,
     discountLabel: 'None',
-    tax: 357.60,
-    taxRate: 12,
-    total: 3337.60,
-    paymentMethod: 'cash',
-    amountTendered: 3500,
-    change: 162.40,
-    vatExempt: false,
-  },
-  {
-    id: 'TXN-20260116-C3D4',
-    transactionId: 'TXN-20260116-C3D4',
-    status: 'completed',
-    createdAt: new Date(today.setHours(9, 15, 0)),
-    customerName: 'Juan Dela Cruz',
-    items: [
-      { id: 4, name: 'Cement 40kg', sku: 'HW-2001', unit: 'bag', price: 360, quantity: 5 },
-      { id: 6, name: 'Nails Assorted', sku: 'HW-3102', unit: 'pack', price: 55, quantity: 2 },
-    ],
-    subtotal: 1910,
-    discount: 382,
-    discountLabel: 'Senior Citizen',
-    discountPreset: 'senior',
     tax: 0,
     taxRate: 0,
-    total: 1528,
-    paymentMethod: 'cash',
-    amountTendered: 1600,
-    change: 72,
-    vatExempt: true,
-  },
-  {
-    id: 'TXN-20260115-E5F6',
-    transactionId: 'TXN-20260115-E5F6',
-    status: 'completed',
-    createdAt: new Date(yesterday.setHours(14, 45, 0)),
-    customerName: 'Ana Reyes',
-    items: [
-      { id: 3, name: 'Laundry Detergent 1kg', sku: 'GR-1201', unit: 'pack', price: 150, quantity: 4 },
-      { id: 2, name: 'Cooking Oil 1L', sku: 'GR-1020', unit: 'bottle', price: 160, quantity: 2 },
-    ],
-    subtotal: 920,
-    discount: 0,
-    discountLabel: 'None',
-    tax: 110.40,
-    taxRate: 12,
-    total: 1030.40,
-    paymentMethod: 'card',
-    amountTendered: 1030.40,
+    paymentMethod: order.payments?.[0]?.method || 'cash',
+    amountTendered: total,
     change: 0,
     vatExempt: false,
-  },
-  {
-    id: 'TXN-20260115-G7H8',
-    transactionId: 'TXN-20260115-G7H8',
-    status: 'cancelled',
-    createdAt: new Date(yesterday.setHours(11, 20, 0)),
-    customerName: 'Pedro Garcia',
-    items: [
-      { id: 7, name: 'Screwdriver Set', sku: 'HW-0902', unit: 'set', price: 260, quantity: 1 },
-      { id: 5, name: 'PVC Pipe 1 inch', sku: 'HW-1023', unit: 'pc', price: 95, quantity: 3 },
-    ],
-    subtotal: 545,
-    discount: 0,
-    discountLabel: 'None',
-    tax: 65.40,
-    taxRate: 12,
-    total: 610.40,
-    paymentMethod: 'cash',
-    amountTendered: 700,
-    change: 89.60,
-    vatExempt: false,
-    cancelReason: 'Customer changed mind',
-    cancelledAt: new Date(yesterday.setHours(11, 35, 0)),
-  },
-  {
-    id: 'TXN-20260114-I9J0',
-    transactionId: 'TXN-20260114-I9J0',
-    status: 'completed',
-    createdAt: new Date(twoDaysAgo.setHours(16, 0, 0)),
-    customerName: 'Rosa Mendoza',
-    items: [
-      { id: 1, name: 'Premium Rice 5kg', sku: 'GR-1001', unit: 'bag', price: 1250, quantity: 1 },
-      { id: 3, name: 'Laundry Detergent 1kg', sku: 'GR-1201', unit: 'pack', price: 150, quantity: 2 },
-    ],
-    subtotal: 1550,
-    discount: 155,
-    discountLabel: 'Employee',
-    discountPreset: 'employee',
-    tax: 167.40,
-    taxRate: 12,
-    total: 1562.40,
-    paymentMethod: 'ewallet',
-    amountTendered: 1562.40,
-    change: 0,
-    vatExempt: false,
-  },
-  {
-    id: 'TXN-20260113-K1L2',
-    transactionId: 'TXN-20260113-K1L2',
-    status: 'completed',
-    createdAt: new Date(threeDaysAgo.setHours(13, 30, 0)),
-    customerName: 'Walk-in Customer',
-    items: [
-      { id: 8, name: 'General Item', sku: 'GN-0001', unit: 'pc', price: 99, quantity: 5 },
-    ],
-    subtotal: 495,
-    discount: 0,
-    discountLabel: 'None',
-    tax: 59.40,
-    taxRate: 12,
-    total: 554.40,
-    paymentMethod: 'cash',
-    amountTendered: 600,
-    change: 45.60,
-    vatExempt: false,
-  },
-];
+  };
+};
 
 export function OrderProvider({ children }) {
-  const [orders, setOrders] = useState(INITIAL_ORDERS);
+  const [orders, setOrders] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Add a new order after checkout
-  const addOrder = useCallback((orderData) => {
-    const order = {
+  // Fetch orders from backend
+  const fetchOrders = useCallback(async (params = {}) => {
+    try {
+      setIsLoading(true);
+      const response = await orderService.getOrders({
+        per_page: 50,
+        ...params,
+      });
+
+      const backendOrders = (response.data || []).map(mapBackendOrder);
+      setOrders(backendOrders);
+      return backendOrders;
+    } catch (err) {
+      console.error('Error fetching orders:', err);
+      return orders;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [orders]);
+
+  // Load orders on mount
+  useEffect(() => {
+    fetchOrders();
+  }, []);
+
+  // Add a new order via backend API, then create payment
+  const addOrder = useCallback(async (orderData) => {
+    // Build items array for backend
+    const items = (orderData.items || []).map((item) => ({
+      product_id: item.id,
+      quantity: item.quantity,
+    }));
+
+    // Derive ordered_at from checkout data
+    const orderedAt = orderData.timestamp
+      ? new Date(orderData.timestamp).toISOString()
+      : new Date().toISOString();
+
+    // 1. Create order on backend
+    const orderResponse = await orderService.createOrder({
+      customer_id: orderData.customerId || null,
+      ordered_at: orderedAt,
+      status: 'completed',
+      items,
+    });
+
+    const createdOrder = orderResponse.data;
+
+    // 2. Create payment on backend
+    const paymentAmount = Math.round((orderData.total || 0) * 100);
+
+    await orderService.createPayment({
+      order_id: createdOrder.id,
+      paid_at: orderedAt,
+      amount: paymentAmount,
+      method: mapPaymentMethod(orderData.paymentMethod),
+      status: 'completed',
+    });
+
+    // 3. Add to local state for immediate UI update
+    const frontendOrder = {
       ...orderData,
-      id: orderData.transactionId,
+      id: createdOrder.order_number || `ORD-${createdOrder.id}`,
+      backendId: createdOrder.id,
+      transactionId: orderData.transactionId || createdOrder.order_number,
       status: 'completed',
       createdAt: orderData.timestamp || new Date(),
     };
-    setOrders((prev) => [order, ...prev]);
-    return order;
+
+    setOrders((prev) => [frontendOrder, ...prev]);
+    return frontendOrder;
   }, []);
 
   // Get order by ID
   const getOrderById = useCallback((id) => {
-    return orders.find((order) => order.id === id);
+    return orders.find((order) => order.id === id || order.backendId === id);
   }, [orders]);
 
   // Get today's orders
@@ -176,9 +150,6 @@ export function OrderProvider({ children }) {
 
   // Get order statistics
   const getOrderStats = useCallback(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     const todaysOrders = getTodaysOrders();
     const completedOrders = orders.filter((order) => order.status === 'completed');
     const cancelledOrders = orders.filter((order) => order.status === 'cancelled');
@@ -237,8 +208,8 @@ export function OrderProvider({ children }) {
     const searchLower = query.toLowerCase();
     return orders.filter(
       (order) =>
-        order.id.toLowerCase().includes(searchLower) ||
-        order.customerName.toLowerCase().includes(searchLower)
+        order.id?.toLowerCase().includes(searchLower) ||
+        order.customerName?.toLowerCase().includes(searchLower)
     );
   }, [orders]);
 
@@ -260,7 +231,9 @@ export function OrderProvider({ children }) {
 
   const value = {
     orders,
+    isLoading,
     addOrder,
+    fetchOrders,
     getOrderById,
     getTodaysOrders,
     getOrderStats,

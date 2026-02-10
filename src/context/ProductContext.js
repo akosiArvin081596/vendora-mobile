@@ -12,21 +12,18 @@ const normalizeProduct = (p) => {
     ? p.category.slug || p.category.id || p.category.name || 'general'
     : p.category;
 
-  // Normalize bulk_pricing from API (snake_case, cents) to bulkPricing (camelCase, decimal)
+  // Normalize bulk_pricing from API (snake_case) to bulkPricing (camelCase)
   const apiBulkPricing = p.bulk_pricing || p.bulkPricing || [];
   const normalizedBulkPricing = apiBulkPricing.map((tier) => ({
     minQty: tier.min_qty ?? tier.minQty,
-    // API returns price in cents, convert to decimal
-    price: tier.min_qty !== undefined ? tier.price / 100 : tier.price,
+    price: tier.price,
   }));
 
-  // API stores prices in cents, convert to decimal PHP
-  const rawPrice = p.price_cents ?? p.price ?? 0;
-  const normalizedPrice = rawPrice / 100;
+  // API already returns price in whole units (ProductResource divides by 100)
+  const normalizedPrice = p.price ?? 0;
 
   // Similarly for cost
-  const rawCost = p.cost_cents ?? p.cost;
-  const normalizedCost = rawCost != null ? rawCost / 100 : undefined;
+  const normalizedCost = p.cost != null ? p.cost : undefined;
 
   return {
     ...p,
@@ -246,14 +243,27 @@ export function ProductProvider({ children }) {
   }, []);
 
   // Adjust stock (add or subtract)
-  const adjustStock = useCallback(async (productId, adjustment) => {
+  const adjustStock = useCallback(async (productId, adjustment, note = '', unitCost = null) => {
     try {
-      const response = await productService.adjustStock(productId, adjustment);
+      const type = adjustment >= 0 ? 'add' : 'remove';
+      const quantity = Math.abs(adjustment);
+
+      const response = await inventoryService.createAdjustment({
+        product_id: productId,
+        type,
+        quantity,
+        unit_cost: unitCost || undefined,
+        note: note || undefined,
+      });
 
       const updateFn = (prev) =>
         prev.map((product) =>
           product.id === productId
-            ? { ...product, stock: Math.max(0, product.stock + adjustment) }
+            ? {
+                ...product,
+                stock: Math.max(0, product.stock + adjustment),
+                ...(type === 'add' && unitCost ? { cost: unitCost } : {}),
+              }
             : product
         );
 
@@ -408,19 +418,23 @@ export function ProductProvider({ children }) {
       return;
     }
 
-    const normalizedProduct = normalizeProduct(productData);
+    // For partial updates (e.g. stock:updated only sends id + stock),
+    // merge raw fields directly to avoid normalizeProduct overwriting
+    // existing values with defaults (e.g. price becoming 0).
+    const isFullProduct = productData.name !== undefined && productData.price !== undefined;
+    const updates = isFullProduct ? normalizeProduct(productData) : productData;
 
     const updateFn = (prev) =>
       prev.map((product) =>
-        product.id === normalizedProduct.id
-          ? { ...product, ...normalizedProduct }
+        product.id === updates.id
+          ? { ...product, ...updates }
           : product
       );
 
     setInventory(updateFn);
     setPublicProducts(updateFn);
 
-    console.log('[ProductContext] Product updated silently:', normalizedProduct.id);
+    console.log('[ProductContext] Product updated silently:', updates.id);
   }, []);
 
   // Remove product silently (for real-time sync)

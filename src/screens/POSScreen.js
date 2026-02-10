@@ -24,8 +24,10 @@ import CartPanel from '../components/CartPanel';
 import FilterChip from '../components/FilterChip';
 import CheckoutModal from '../components/CheckoutModal';
 import ReceiptModal from '../components/ReceiptModal';
+import thermalPrinterService from '../services/thermalPrinterService';
 import SaveCartModal from '../components/SaveCartModal';
 import SavedCartsModal from '../components/SavedCartsModal';
+import { formatCurrency } from '../utils/checkoutHelpers';
 
 export default function POSScreen() {
   const { width } = useWindowDimensions();
@@ -35,7 +37,6 @@ export default function POSScreen() {
     inventory,
     categories,
     getProductBySku,
-    decrementStockAfterSale,
     isLoadingInventory,
     fetchInventory,
     error,
@@ -197,16 +198,45 @@ export default function POSScreen() {
     setShowCheckout(true);
   }, [cart.length]);
 
-  // Handle checkout completion
-  const handleCheckoutComplete = useCallback((data) => {
-    // Decrement stock for sold items
-    decrementStockAfterSale(cart);
-    // Save order to order history
-    addOrder(data);
-    setReceiptData(data);
-    setShowCheckout(false);
-    setShowReceipt(true);
-  }, [cart, decrementStockAfterSale, addOrder]);
+  // Handle checkout completion - create order via backend API
+  const handleCheckoutComplete = useCallback(async (data) => {
+    try {
+      // Create order + payment on backend (also decrements stock & creates ledger entries)
+      await addOrder(data);
+      setShowCheckout(false);
+
+      // Refresh inventory to reflect stock changes from backend
+      await fetchInventory({ forceRefresh: true });
+
+      // Auto-print receipt via thermal printer
+      if (thermalPrinterService.isAvailable()) {
+        const lastPrinter = await thermalPrinterService.getLastPrinter();
+        if (lastPrinter) {
+          try {
+            await thermalPrinterService.connect(lastPrinter);
+            await thermalPrinterService.printReceipt(data);
+          } catch (printError) {
+            Alert.alert('Print Error', printError.message || 'Failed to print receipt.');
+          }
+        }
+      }
+
+      // Clear cart and reset for new transaction
+      clearCart();
+      clearAbandonedCart();
+      setCartNotes('');
+      setReceiptData(null);
+      setShowReceipt(false);
+      setSelectedDiscount('none');
+      setCustomDiscountType('percentage');
+      setCustomDiscountValue('');
+      setPromoCode('');
+
+      Alert.alert('Success', 'Transaction complete. Receipt printed.');
+    } catch (error) {
+      Alert.alert('Order Failed', error.message || 'Failed to create order. Please try again.');
+    }
+  }, [addOrder, fetchInventory, clearCart, clearAbandonedCart]);
 
   // Handle new transaction
   const handleNewTransaction = useCallback(() => {
@@ -454,7 +484,7 @@ export default function POSScreen() {
                 </View>
                 <View className="flex-row items-center gap-2">
                   <Text className="text-white text-lg font-bold">
-                    ₱ {subtotal.toLocaleString()}
+                    ₱ {formatCurrency(subtotal)}
                   </Text>
                   <Ionicons name="chevron-up" size={20} color="#fff" />
                 </View>

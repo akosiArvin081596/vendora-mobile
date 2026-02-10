@@ -15,6 +15,7 @@ import ReportsScreen from "../screens/ReportsScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import StoreScreen from "../screens/StoreScreen";
 import AdminScreen from "../screens/AdminScreen";
+import LedgerScreen from "../screens/LedgerScreen";
 import FloatingNav from "../components/FloatingNav";
 
 const { width } = Dimensions.get('window');
@@ -29,6 +30,7 @@ const SCREENS = {
   Inventory: InventoryScreen,
   Products: ProductsScreen,
   Orders: OrdersScreen,
+  Ledger: LedgerScreen,
   Reports: ReportsScreen,
   Settings: SettingsScreen,
   Store: StoreScreen,
@@ -36,13 +38,13 @@ const SCREENS = {
 };
 
 // Screen order for vendor navigation (POS-focused)
-const VENDOR_SCREEN_ORDER = ['POS', 'Dashboard', 'Sales', 'Inventory', 'Products', 'Settings'];
+const VENDOR_SCREEN_ORDER = ['POS', 'Dashboard', 'Sales', 'Inventory', 'Ledger', 'Products', 'Settings'];
 
 // Screen order for admin navigation (all screens)
-const ADMIN_SCREEN_ORDER = ['Admin', 'POS', 'Dashboard', 'Sales', 'Inventory', 'Products', 'Orders', 'Reports', 'Settings', 'Store'];
+const ADMIN_SCREEN_ORDER = ['Admin', 'POS', 'Dashboard', 'Sales', 'Inventory', 'Ledger', 'Products', 'Orders', 'Reports', 'Settings', 'Store'];
 
 // Default screen order (all screens)
-const ALL_SCREEN_ORDER = ['POS', 'Dashboard', 'Sales', 'Store', 'Inventory', 'Products', 'Orders', 'Reports', 'Settings', 'Admin'];
+const ALL_SCREEN_ORDER = ['POS', 'Dashboard', 'Sales', 'Store', 'Inventory', 'Ledger', 'Products', 'Orders', 'Reports', 'Settings', 'Admin'];
 
 // Get screen order based on user role
 const getScreenOrderForRole = (role) => {

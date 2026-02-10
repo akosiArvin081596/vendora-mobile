@@ -288,7 +288,7 @@ export default function CheckoutModal({
                         onPress={() => handleQuickAmount(amount)}
                       >
                         <Text className="text-vendora-text text-center font-medium">
-                          ₱{amount.toLocaleString()}
+                          ₱{formatCurrency(amount)}
                         </Text>
                       </TouchableOpacity>
                     ))}
@@ -434,21 +434,31 @@ export default function CheckoutModal({
             {/* Confirm Button */}
             <View className="px-5 pb-8 pt-2">
               <TouchableOpacity
-              className={`py-4 rounded-2xl flex-row items-center justify-center gap-2 ${
-                isValidCashPayment
-                  ? 'bg-vendora-purple'
-                  : 'bg-vendora-purple/50'
-              }`}
-              onPress={handleConfirm}
-              disabled={!isValidCashPayment}
-              style={
-                isValidCashPayment
-                  ? (Platform.OS === 'web'
-                    ? { boxShadow: '0px 4px 12px rgba(147, 51, 234, 0.35)' }
-                    : { elevation: 8 })
-                  : {}
-              }
-            >
+                className={`py-4 rounded-2xl flex-row items-center justify-center gap-2 ${
+                  isValidCashPayment
+                    ? 'bg-vendora-purple'
+                    : 'bg-vendora-purple/50'
+                }`}
+                onPress={() => {
+                  if (!isValidCashPayment) {
+                    if (Platform.OS === 'web') {
+                      window.alert('Please enter the amount tendered before confirming.');
+                    } else {
+                      Alert.alert('Enter Amount', 'Please enter the amount tendered before confirming.');
+                    }
+                    return;
+                  }
+                  handleConfirm();
+                }}
+                activeOpacity={isValidCashPayment ? 0.7 : 0.8}
+                style={
+                  isValidCashPayment
+                    ? (Platform.OS === 'web'
+                      ? { boxShadow: '0px 4px 12px rgba(147, 51, 234, 0.35)' }
+                      : { elevation: 8 })
+                    : {}
+                }
+              >
                 <Text className="text-white font-semibold text-lg">
                   Confirm Payment
                 </Text>
