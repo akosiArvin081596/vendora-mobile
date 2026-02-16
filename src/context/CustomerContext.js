@@ -1,54 +1,10 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import api from '../services/api';
+import CustomerRepository from '../db/repositories/CustomerRepository';
+import SyncQueueRepository from '../db/repositories/SyncQueueRepository';
+import SyncService from '../sync/SyncService';
 
 const CustomerContext = createContext();
-
-// Sample customers with loyalty points
-const INITIAL_CUSTOMERS = [
-  {
-    id: 1,
-    name: 'Maria Santos',
-    phone: '09171234567',
-    email: 'maria.santos@email.com',
-    loyaltyPoints: 250,
-    totalSpent: 12500,
-    orderCount: 15,
-    memberSince: new Date('2025-06-15'),
-    tier: 'gold',
-  },
-  {
-    id: 2,
-    name: 'Juan Dela Cruz',
-    phone: '09189876543',
-    email: 'juan.dc@email.com',
-    loyaltyPoints: 180,
-    totalSpent: 8900,
-    orderCount: 10,
-    memberSince: new Date('2025-08-20'),
-    tier: 'silver',
-  },
-  {
-    id: 3,
-    name: 'Ana Reyes',
-    phone: '09201112233',
-    email: 'ana.reyes@email.com',
-    loyaltyPoints: 420,
-    totalSpent: 21000,
-    orderCount: 25,
-    memberSince: new Date('2025-03-10'),
-    tier: 'platinum',
-  },
-  {
-    id: 4,
-    name: 'Pedro Garcia',
-    phone: '09334445566',
-    email: null,
-    loyaltyPoints: 50,
-    totalSpent: 2500,
-    orderCount: 3,
-    memberSince: new Date('2025-12-01'),
-    tier: 'bronze',
-  },
-];
 
 // Loyalty tiers configuration
 export const LOYALTY_TIERS = {
@@ -61,48 +17,238 @@ export const LOYALTY_TIERS = {
 // Points earned per peso spent
 const POINTS_PER_PESO = 0.01; // 1 point per 100 pesos
 
+/**
+ * Normalize a SQLite customer row.
+ */
+const normalizeLocalCustomer = (row) => {
+  if (!row) return null;
+  return {
+    ...row,
+    loyaltyPoints: row.loyaltyPoints ?? 0,
+    totalSpent: row.total_spent ?? row.totalSpent ?? 0,
+    orderCount: row.orders_count ?? row.orderCount ?? 0,
+    memberSince: row.created_at ? new Date(row.created_at) : new Date(),
+    tier: 'bronze',
+  };
+};
+
+/**
+ * Normalize an API customer response.
+ */
+const normalizeApiCustomer = (c) => {
+  return {
+    ...c,
+    loyaltyPoints: c.loyaltyPoints ?? 0,
+    totalSpent: c.total_spent ?? c.totalSpent ?? 0,
+    orderCount: c.orders_count ?? c.orderCount ?? 0,
+    memberSince: c.created_at ? new Date(c.created_at) : new Date(),
+    tier: 'bronze',
+  };
+};
+
 export function CustomerProvider({ children }) {
-  const [customers, setCustomers] = useState(INITIAL_CUSTOMERS);
+  const [customers, setCustomers] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [currentCustomer, setCurrentCustomer] = useState(null);
   const [recentlyViewed, setRecentlyViewed] = useState([]);
+  const customersLoaded = useRef(false);
+
+  /**
+   * Load customers from SQLite as immediate data.
+   */
+  const loadCustomersFromLocal = useCallback(() => {
+    try {
+      const rows = CustomerRepository.getAll();
+      if (rows.length > 0) {
+        const normalized = rows.map(normalizeLocalCustomer);
+        setCustomers(normalized);
+        customersLoaded.current = true;
+        return normalized;
+      }
+    } catch (err) {
+      console.warn('[CustomerContext] Error loading local customers:', err.message);
+    }
+    return [];
+  }, []);
+
+  /**
+   * Fetch customers from API (local-first, then background refresh).
+   */
+  const fetchCustomers = useCallback(async (forceRefresh = false) => {
+    if (customersLoaded.current && !forceRefresh) {
+      return customers;
+    }
+
+    // Step 1: Load from SQLite
+    const localData = loadCustomersFromLocal();
+    if (localData.length > 0 && !forceRefresh) {
+      _backgroundRefreshCustomers();
+      return localData;
+    }
+
+    // Step 2: Fetch from API
+    try {
+      setIsLoading(true);
+      const response = await api.get('/customers', { params: { per_page: 100 } });
+      const apiCustomers = (response.data || []).map(normalizeApiCustomer);
+
+      setCustomers(apiCustomers);
+      customersLoaded.current = true;
+
+      // Cache to SQLite
+      try {
+        CustomerRepository.bulkUpsertFromServer(response.data || []);
+      } catch (dbErr) {
+        console.warn('[CustomerContext] Error caching customers:', dbErr.message);
+      }
+
+      return apiCustomers;
+    } catch (err) {
+      console.error('[CustomerContext] Error fetching customers:', err.message);
+      // Try local as fallback
+      if (!customersLoaded.current) {
+        loadCustomersFromLocal();
+      }
+      return customers;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [customers, loadCustomersFromLocal]);
+
+  /**
+   * Background refresh customers from API.
+   */
+  const _backgroundRefreshCustomers = useCallback(async () => {
+    try {
+      const response = await api.get('/customers', { params: { per_page: 100 } });
+      const apiCustomers = (response.data || []).map(normalizeApiCustomer);
+
+      if (apiCustomers.length > 0) {
+        CustomerRepository.bulkUpsertFromServer(response.data || []);
+        setCustomers(apiCustomers);
+        customersLoaded.current = true;
+      }
+    } catch (err) {
+      console.warn('[CustomerContext] Background refresh failed:', err.message);
+    }
+  }, []);
 
   // Get customer by ID
   const getCustomerById = useCallback((id) => {
     return customers.find((c) => c.id === id);
   }, [customers]);
 
-  // Search customers
+  // Search customers (in-memory first, fall back to SQLite)
   const searchCustomers = useCallback((query) => {
     if (!query) return customers;
     const searchLower = query.toLowerCase();
-    return customers.filter(
+    const memoryResults = customers.filter(
       (c) =>
-        c.name.toLowerCase().includes(searchLower) ||
-        c.phone.includes(query) ||
+        c.name?.toLowerCase().includes(searchLower) ||
+        c.phone?.includes(query) ||
         (c.email && c.email.toLowerCase().includes(searchLower))
     );
+
+    if (memoryResults.length > 0) {
+      return memoryResults;
+    }
+
+    // Try SQLite for deeper search
+    try {
+      const dbResults = CustomerRepository.search(query);
+      return dbResults.map(normalizeLocalCustomer);
+    } catch (err) {
+      return [];
+    }
   }, [customers]);
 
-  // Add new customer
+  /**
+   * Add new customer — offline-first.
+   * Writes to SQLite, enqueues sync, returns immediately.
+   */
   const addCustomer = useCallback((customerData) => {
-    const newCustomer = {
-      ...customerData,
-      id: Math.max(...customers.map((c) => c.id), 0) + 1,
-      loyaltyPoints: 0,
-      totalSpent: 0,
-      orderCount: 0,
-      memberSince: new Date(),
-      tier: 'bronze',
-    };
-    setCustomers((prev) => [...prev, newCustomer]);
-    return newCustomer;
-  }, [customers]);
+    // 1. Write to SQLite
+    let localId;
+    try {
+      localId = CustomerRepository.createLocal({
+        name: customerData.name,
+        email: customerData.email,
+        phone: customerData.phone,
+        address: customerData.address,
+        notes: customerData.notes,
+      });
+    } catch (err) {
+      console.error('[CustomerContext] SQLite customer create failed:', err);
+      throw err;
+    }
 
-  // Update customer
+    // 2. Enqueue sync
+    try {
+      SyncQueueRepository.enqueue({
+        entityType: 'customer',
+        entityLocalId: localId,
+        action: 'create',
+        endpoint: '/customers',
+        method: 'POST',
+        payload: customerData,
+      });
+    } catch (err) {
+      console.warn('[CustomerContext] Sync enqueue failed:', err.message);
+    }
+
+    // 3. Add to React state immediately
+    const newCustomer = normalizeLocalCustomer({
+      local_id: localId,
+      ...customerData,
+      sync_status: 'pending',
+      created_at: new Date().toISOString(),
+    });
+
+    setCustomers((prev) => [...prev, newCustomer]);
+
+    // 4. Trigger sync
+    SyncService.processQueue().catch(() => {});
+
+    return newCustomer;
+  }, []);
+
+  /**
+   * Update customer — offline-first.
+   * Writes to SQLite, enqueues sync, returns immediately.
+   */
   const updateCustomer = useCallback((customerId, updates) => {
+    // 1. Update SQLite
+    try {
+      CustomerRepository.updateLocal(customerId, updates);
+    } catch (err) {
+      console.error('[CustomerContext] SQLite customer update failed:', err);
+      throw err;
+    }
+
+    // 2. Enqueue sync
+    try {
+      const customer = CustomerRepository.getById(customerId);
+      SyncQueueRepository.enqueue({
+        entityType: 'customer',
+        entityLocalId: customer?.local_id || `server-${customerId}`,
+        action: 'update',
+        endpoint: `/customers/${customerId}`,
+        method: 'PUT',
+        payload: updates,
+      });
+    } catch (err) {
+      console.warn('[CustomerContext] Sync enqueue failed:', err.message);
+    }
+
+    // 3. Update React state immediately
     setCustomers((prev) =>
-      prev.map((c) => (c.id === customerId ? { ...c, ...updates } : c))
+      prev.map((c) => (c.id === customerId ? { ...c, ...updates, syncStatus: 'pending' } : c))
     );
+
+    // 4. Trigger sync
+    SyncService.processQueue().catch(() => {});
+
+    return { id: customerId, ...updates };
   }, []);
 
   // Calculate tier based on points
@@ -113,21 +259,21 @@ export function CustomerProvider({ children }) {
     return 'bronze';
   };
 
-  // Add loyalty points after purchase
+  // Add loyalty points after purchase (local-only for now)
   const addLoyaltyPoints = useCallback((customerId, purchaseAmount) => {
     setCustomers((prev) =>
       prev.map((c) => {
         if (c.id === customerId) {
-          const tierConfig = LOYALTY_TIERS[c.tier];
+          const tierConfig = LOYALTY_TIERS[c.tier || 'bronze'];
           const basePoints = Math.floor(purchaseAmount * POINTS_PER_PESO);
           const earnedPoints = Math.floor(basePoints * tierConfig.pointsMultiplier);
-          const newPoints = c.loyaltyPoints + earnedPoints;
+          const newPoints = (c.loyaltyPoints || 0) + earnedPoints;
           const newTier = calculateTier(newPoints);
           return {
             ...c,
             loyaltyPoints: newPoints,
-            totalSpent: c.totalSpent + purchaseAmount,
-            orderCount: c.orderCount + 1,
+            totalSpent: (c.totalSpent || 0) + purchaseAmount,
+            orderCount: (c.orderCount || 0) + 1,
             tier: newTier,
           };
         }
@@ -136,11 +282,11 @@ export function CustomerProvider({ children }) {
     );
   }, []);
 
-  // Redeem loyalty points
+  // Redeem loyalty points (local-only for now)
   const redeemPoints = useCallback((customerId, points) => {
     setCustomers((prev) =>
       prev.map((c) => {
-        if (c.id === customerId && c.loyaltyPoints >= points) {
+        if (c.id === customerId && (c.loyaltyPoints || 0) >= points) {
           const newPoints = c.loyaltyPoints - points;
           return {
             ...c,
@@ -182,12 +328,14 @@ export function CustomerProvider({ children }) {
 
   const value = {
     customers,
+    isLoading,
     currentCustomer,
     recentlyViewed,
     getCustomerById,
     searchCustomers,
     addCustomer,
     updateCustomer,
+    fetchCustomers,
     addLoyaltyPoints,
     redeemPoints,
     pointsToPeso,

@@ -1,5 +1,6 @@
 import "./global.css";
 import "./src/utils/timezone";
+import { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { NavigationContainer } from "@react-navigation/native";
@@ -12,33 +13,63 @@ import { ReviewProvider } from "./src/context/ReviewContext";
 import { AuthProvider } from "./src/context/AuthContext";
 import { AdminProvider } from "./src/context/AdminContext";
 import { SocketProvider } from "./src/context/SocketContext";
+import { NetworkProvider } from "./src/context/NetworkContext";
+import { SyncProvider } from "./src/context/SyncContext";
 import DOMErrorBoundary from "./src/components/DOMErrorBoundary";
+import { getDatabase } from "./src/db/database";
+import { registerBackgroundSync } from "./src/tasks/backgroundSync";
 
 export default function App() {
+  const [dbReady, setDbReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      getDatabase();
+      setDbReady(true);
+      console.log("[App] SQLite database ready.");
+      // Register background sync task
+      registerBackgroundSync().catch((err) =>
+        console.warn("[App] Background sync registration failed:", err.message)
+      );
+    } catch (error) {
+      console.error("[App] Failed to initialize database:", error);
+      // Still allow app to function in online-only mode
+      setDbReady(true);
+    }
+  }, []);
+
+  if (!dbReady) {
+    return null;
+  }
+
   return (
     <DOMErrorBoundary>
-      <AuthProvider>
-        <AdminProvider>
-          <ProductProvider>
-            <OrderProvider>
-              <SocketProvider>
-                <CustomerProvider>
-                  <CartProvider>
-                    <ReviewProvider>
-                      <SafeAreaProvider>
-                        <StatusBar style="light" backgroundColor="#1a1025" />
-                        <NavigationContainer>
-                          <RootNavigator />
-                        </NavigationContainer>
-                      </SafeAreaProvider>
-                    </ReviewProvider>
-                  </CartProvider>
-                </CustomerProvider>
-              </SocketProvider>
-            </OrderProvider>
-          </ProductProvider>
-        </AdminProvider>
-      </AuthProvider>
+      <NetworkProvider>
+        <AuthProvider>
+          <SyncProvider>
+            <AdminProvider>
+              <ProductProvider>
+                <OrderProvider>
+                  <SocketProvider>
+                    <CustomerProvider>
+                      <CartProvider>
+                        <ReviewProvider>
+                          <SafeAreaProvider>
+                            <StatusBar style="light" backgroundColor="#1a1025" />
+                            <NavigationContainer>
+                              <RootNavigator />
+                            </NavigationContainer>
+                          </SafeAreaProvider>
+                        </ReviewProvider>
+                      </CartProvider>
+                    </CustomerProvider>
+                  </SocketProvider>
+                </OrderProvider>
+              </ProductProvider>
+            </AdminProvider>
+          </SyncProvider>
+        </AuthProvider>
+      </NetworkProvider>
     </DOMErrorBoundary>
   );
 }

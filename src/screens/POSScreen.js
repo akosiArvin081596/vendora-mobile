@@ -39,6 +39,7 @@ export default function POSScreen() {
     getProductBySku,
     isLoadingInventory,
     fetchInventory,
+    decrementStockAfterSale,
     error,
     isOffline,
   } = useProducts();
@@ -198,15 +199,15 @@ export default function POSScreen() {
     setShowCheckout(true);
   }, [cart.length]);
 
-  // Handle checkout completion - create order via backend API
+  // Handle checkout completion — offline-first (writes to SQLite, syncs in background)
   const handleCheckoutComplete = useCallback(async (data) => {
     try {
-      // Create order + payment on backend (also decrements stock & creates ledger entries)
-      await addOrder(data);
+      // Create order in SQLite + enqueue sync (instant, works offline)
+      addOrder(data);
       setShowCheckout(false);
 
-      // Refresh inventory to reflect stock changes from backend
-      await fetchInventory({ forceRefresh: true });
+      // Decrement stock in React state (SQLite already decremented by OrderRepository)
+      decrementStockAfterSale(data.items);
 
       // Auto-print receipt via thermal printer
       if (thermalPrinterService.isAvailable()) {
@@ -232,11 +233,11 @@ export default function POSScreen() {
       setCustomDiscountValue('');
       setPromoCode('');
 
-      Alert.alert('Success', 'Transaction complete. Receipt printed.');
+      Alert.alert('Success', 'Transaction complete!');
     } catch (error) {
       Alert.alert('Order Failed', error.message || 'Failed to create order. Please try again.');
     }
-  }, [addOrder, fetchInventory, clearCart, clearAbandonedCart]);
+  }, [addOrder, clearCart, clearAbandonedCart]);
 
   // Handle new transaction
   const handleNewTransaction = useCallback(() => {

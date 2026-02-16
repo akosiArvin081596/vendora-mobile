@@ -22,16 +22,19 @@ export default function StockUpdateModal({
   const [unitCost, setUnitCost] = useState('');
   const [notes, setNotes] = useState('');
 
+  const [submitting, setSubmitting] = useState(false);
+
   useEffect(() => {
     if (visible) {
       setAdjustmentType('add');
       setQuantity('');
       setUnitCost('');
       setNotes('');
+      setSubmitting(false);
     }
   }, [visible]);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const qty = parseInt(quantity, 10);
     if (isNaN(qty) || qty <= 0) {
       Alert.alert('Invalid Quantity', 'Please enter a valid quantity greater than 0');
@@ -52,12 +55,24 @@ export default function StockUpdateModal({
     }
 
     const costValue = adjustmentType === 'add' && unitCost.trim() ? parseFloat(unitCost) : null;
-    onUpdateStock(product.id, adjustment, notes, costValue);
-    Alert.alert(
-      'Stock Updated',
-      `${product.name} stock ${adjustmentType === 'add' ? 'increased' : 'decreased'} by ${qty}. New stock: ${newStock}`
-    );
-    onClose();
+
+    setSubmitting(true);
+    try {
+      const result = await onUpdateStock(product.id, adjustment, notes, costValue);
+      const serverStock = result?.inventory?.stock;
+      Alert.alert(
+        'Stock Updated',
+        `${product.name} stock ${adjustmentType === 'add' ? 'increased' : 'decreased'} by ${qty}. New stock: ${serverStock != null ? serverStock : newStock}`
+      );
+      onClose();
+    } catch (err) {
+      const message = err?.response?.data?.message
+        || err?.response?.data?.errors?.quantity?.[0]
+        || 'Failed to update stock. Please try again.';
+      Alert.alert('Error', message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (!product) return null;
@@ -231,8 +246,9 @@ export default function StockUpdateModal({
             <TouchableOpacity
             className={`py-4 rounded-2xl flex-row items-center justify-center gap-2 ${
               adjustmentType === 'add' ? 'bg-green-500' : 'bg-red-500'
-            }`}
+            } ${submitting ? 'opacity-60' : ''}`}
             onPress={handleSubmit}
+            disabled={submitting}
             style={
               Platform.OS === 'web'
                 ? { boxShadow: '0px 4px 12px rgba(0, 0, 0, 0.25)' }
@@ -245,7 +261,7 @@ export default function StockUpdateModal({
                 color="#fff"
               />
               <Text className="text-white font-semibold text-lg">
-                {adjustmentType === 'add' ? 'Add Stock' : 'Remove Stock'}
+                {submitting ? 'Updating...' : adjustmentType === 'add' ? 'Add Stock' : 'Remove Stock'}
               </Text>
             </TouchableOpacity>
           </TouchableOpacity>

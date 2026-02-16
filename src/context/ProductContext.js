@@ -3,6 +3,12 @@ import productService from '../services/productService';
 import inventoryService from '../services/inventoryService';
 import categoryService from '../services/categoryService';
 import { products as fallbackProducts, categories as fallbackCategories } from '../data/products';
+import ProductRepository from '../db/repositories/ProductRepository';
+import CategoryRepository from '../db/repositories/CategoryRepository';
+import InventoryAdjustmentRepository from '../db/repositories/InventoryAdjustmentRepository';
+import SyncQueueRepository from '../db/repositories/SyncQueueRepository';
+import SyncManager from '../sync/SyncManager';
+import SyncService from '../sync/SyncService';
 
 const ProductContext = createContext();
 
@@ -32,6 +38,20 @@ const normalizeProduct = (p) => {
     category: categoryValue,
     createdAt: p.createdAt || p.created_at || p.createdAt || p.created || p.createdAt,
     bulkPricing: normalizedBulkPricing,
+  };
+};
+
+/**
+ * Convert a SQLite product row to the same shape the rest of the app expects.
+ */
+const normalizeLocalProduct = (row) => {
+  if (!row) return null;
+  return {
+    ...row,
+    is_active: row.is_active === 1,
+    is_ecommerce: row.is_ecommerce === 1,
+    category: row.category_id,
+    bulkPricing: [],
   };
 };
 
@@ -67,6 +87,50 @@ export function ProductProvider({ children }) {
     total: 0,
     totalPages: 0,
   });
+
+  /**
+   * Load products from SQLite as immediate data.
+   */
+  const loadInventoryFromLocal = useCallback(() => {
+    try {
+      const rows = ProductRepository.getAll();
+      if (rows.length > 0) {
+        const normalized = rows.map(normalizeLocalProduct);
+        setInventory(normalized);
+        inventoryLoaded.current = true;
+        return normalized;
+      }
+    } catch (err) {
+      console.warn('[ProductContext] Error loading local inventory:', err.message);
+    }
+    return [];
+  }, []);
+
+  /**
+   * Load categories from SQLite as immediate data.
+   */
+  const loadCategoriesFromLocal = useCallback(() => {
+    try {
+      const rows = CategoryRepository.getAll();
+      if (rows.length > 0) {
+        const formattedCategories = [
+          { value: 'all', label: 'All Categories', icon: 'grid-outline' },
+          ...rows.map((cat) => ({
+            value: cat.slug || cat.id,
+            label: cat.name,
+            icon: cat.icon || 'cube-outline',
+            id: cat.id,
+          })),
+        ];
+        setCategories(formattedCategories);
+        categoriesLoaded.current = true;
+        return formattedCategories;
+      }
+    } catch (err) {
+      console.warn('[ProductContext] Error loading local categories:', err.message);
+    }
+    return [];
+  }, []);
 
   // Fetch public products (e-commerce) - with caching
   const fetchProducts = useCallback(async (options = {}) => {
@@ -112,7 +176,7 @@ export function ProductProvider({ children }) {
     }
   }, [publicProducts]);
 
-  // Fetch inventory (user's products) - with caching
+  // Fetch inventory (user's products) - local-first, then background API refresh
   const fetchInventory = useCallback(async (options = {}) => {
     const { forceRefresh = false, ...params } = options;
 
@@ -121,6 +185,15 @@ export function ProductProvider({ children }) {
       return inventory;
     }
 
+    // Step 1: Load from SQLite immediately (instant)
+    const localData = loadInventoryFromLocal();
+    if (localData.length > 0 && !forceRefresh) {
+      // Data displayed from local — background-refresh from API
+      _backgroundRefreshInventory(params);
+      return localData;
+    }
+
+    // Step 2: No local data or force refresh — fetch from API
     try {
       setIsLoadingInventory(true);
       setError(null);
@@ -130,10 +203,18 @@ export function ProductProvider({ children }) {
         ...params,
       });
 
-      const normalized = (response.data || []).map(normalizeProduct);
+      const apiProducts = response.data || [];
+      const normalized = apiProducts.map(normalizeProduct);
 
       setInventory(normalized);
       inventoryLoaded.current = true;
+
+      // Cache to SQLite
+      try {
+        ProductRepository.bulkUpsertFromServer(apiProducts);
+      } catch (dbErr) {
+        console.warn('[ProductContext] Error caching products to SQLite:', dbErr.message);
+      }
 
       if (response.meta) {
         setInventoryPagination({
@@ -152,25 +233,66 @@ export function ProductProvider({ children }) {
 
       // Don't set fallback for inventory - user should see their own products only
       if (!inventoryLoaded.current) {
-        setInventory([]);
+        // Try local as last resort
+        const local = loadInventoryFromLocal();
+        if (local.length === 0) {
+          setInventory([]);
+        }
       }
       return inventory;
     } finally {
       setIsLoadingInventory(false);
     }
-  }, [inventory]);
+  }, [inventory, loadInventoryFromLocal]);
 
-  // Fetch categories - with caching
+  /**
+   * Background refresh: fetch from API and update SQLite + state silently.
+   */
+  const _backgroundRefreshInventory = useCallback(async (params = {}) => {
+    try {
+      const response = await inventoryService.getAll({ per_page: 100, ...params });
+      const apiProducts = response.data || [];
+
+      if (apiProducts.length > 0) {
+        ProductRepository.bulkUpsertFromServer(apiProducts);
+        const normalized = apiProducts.map(normalizeProduct);
+        setInventory(normalized);
+        inventoryLoaded.current = true;
+      }
+      setIsOffline(false);
+    } catch (err) {
+      // Silent failure — local data is already displayed
+      console.warn('[ProductContext] Background refresh failed:', err.message);
+    }
+  }, []);
+
+  // Fetch categories - local-first
   const fetchCategories = useCallback(async (forceRefresh = false) => {
     if (categoriesLoaded.current && !forceRefresh) {
       return categories;
     }
 
+    // Step 1: Load from SQLite
+    const localCats = loadCategoriesFromLocal();
+    if (localCats.length > 0 && !forceRefresh) {
+      _backgroundRefreshCategories();
+      return localCats;
+    }
+
+    // Step 2: Fetch from API
     try {
       setIsLoadingCategories(true);
       const response = await categoryService.getAll({ is_active: true });
 
       const apiCategories = response.data || [];
+
+      // Cache to SQLite
+      try {
+        CategoryRepository.bulkUpsertFromServer(apiCategories);
+      } catch (dbErr) {
+        console.warn('[ProductContext] Error caching categories to SQLite:', dbErr.message);
+      }
+
       const formattedCategories = [
         { value: 'all', label: 'All Categories', icon: 'grid-outline' },
         ...apiCategories.map((cat) => ({
@@ -187,13 +309,43 @@ export function ProductProvider({ children }) {
     } catch (err) {
       console.error('Error fetching categories:', err);
       if (!categoriesLoaded.current) {
-        setCategories(fallbackCategories);
+        const local = loadCategoriesFromLocal();
+        if (local.length === 0) {
+          setCategories(fallbackCategories);
+        }
       }
       return categories;
     } finally {
       setIsLoadingCategories(false);
     }
-  }, [categories]);
+  }, [categories, loadCategoriesFromLocal]);
+
+  /**
+   * Background refresh categories.
+   */
+  const _backgroundRefreshCategories = useCallback(async () => {
+    try {
+      const response = await categoryService.getAll({ is_active: true });
+      const apiCategories = response.data || [];
+
+      if (apiCategories.length > 0) {
+        CategoryRepository.bulkUpsertFromServer(apiCategories);
+        const formatted = [
+          { value: 'all', label: 'All Categories', icon: 'grid-outline' },
+          ...apiCategories.map((cat) => ({
+            value: cat.slug || cat.id,
+            label: cat.name,
+            icon: cat.icon || 'cube-outline',
+            id: cat.id,
+          })),
+        ];
+        setCategories(formatted);
+        categoriesLoaded.current = true;
+      }
+    } catch (err) {
+      console.warn('[ProductContext] Background category refresh failed:', err.message);
+    }
+  }, []);
 
   // Initialize categories on mount (lightweight)
   useEffect(() => {
@@ -219,167 +371,265 @@ export function ProductProvider({ children }) {
     ]);
   }, [fetchProducts, fetchInventory, fetchCategories]);
 
-  // Update stock for a product
-  const updateStock = useCallback(async (productId, newStock) => {
+  /**
+   * Update stock (set) — offline-first via inventory adjustment.
+   */
+  const updateStock = useCallback((productId, newStock) => {
+    // Get current stock
+    let currentStock = 0;
     try {
-      const response = await productService.updateStock(productId, newStock);
-
-      // Update both states
-      const updateFn = (prev) =>
-        prev.map((product) =>
-          product.id === productId
-            ? { ...product, stock: Math.max(0, newStock) }
-            : product
-        );
-
-      setInventory(updateFn);
-      setPublicProducts(updateFn);
-
-      return response.data;
+      const product = ProductRepository.getById(productId);
+      currentStock = product?.stock ?? 0;
     } catch (err) {
-      console.error('Error updating stock:', err);
+      const memProduct = inventory.find((p) => p.id === productId);
+      currentStock = memProduct?.stock ?? 0;
+    }
+
+    // Create a 'set' adjustment
+    try {
+      InventoryAdjustmentRepository.createAdjustment({
+        productId,
+        type: 'set',
+        quantity: newStock,
+        currentStock,
+      });
+    } catch (err) {
+      console.error('[ProductContext] SQLite stock set failed:', err);
       throw err;
     }
-  }, []);
 
-  // Adjust stock (add or subtract)
-  const adjustStock = useCallback(async (productId, adjustment, note = '', unitCost = null) => {
+    // Update React state
+    const updateFn = (prev) =>
+      prev.map((product) =>
+        product.id === productId
+          ? { ...product, stock: Math.max(0, newStock) }
+          : product
+      );
+
+    setInventory(updateFn);
+    setPublicProducts(updateFn);
+
+    // Trigger sync
+    SyncService.processQueue().catch(() => {});
+  }, [inventory]);
+
+  /**
+   * Adjust stock — offline-first.
+   * Writes adjustment to SQLite, updates stock locally, enqueues sync.
+   */
+  const adjustStock = useCallback((productId, adjustment, note = '', unitCost = null) => {
+    const type = adjustment >= 0 ? 'add' : 'remove';
+    const quantity = Math.abs(adjustment);
+
+    // Get current stock from SQLite
+    let currentStock = 0;
     try {
-      const type = adjustment >= 0 ? 'add' : 'remove';
-      const quantity = Math.abs(adjustment);
+      const product = ProductRepository.getById(productId);
+      currentStock = product?.stock ?? 0;
+    } catch (err) {
+      // Fallback to in-memory
+      const memProduct = inventory.find((p) => p.id === productId);
+      currentStock = memProduct?.stock ?? 0;
+    }
 
-      const response = await inventoryService.createAdjustment({
-        product_id: productId,
+    // 1. Create adjustment in SQLite + update stock + enqueue sync
+    let result;
+    try {
+      result = InventoryAdjustmentRepository.createAdjustment({
+        productId,
         type,
         quantity,
-        unit_cost: unitCost || undefined,
-        note: note || undefined,
+        currentStock,
+        unitCost,
+        note,
+      });
+    } catch (err) {
+      console.error('[ProductContext] SQLite adjustment failed:', err);
+      throw err;
+    }
+
+    // 2. Update React state immediately
+    const updateFn = (prev) =>
+      prev.map((product) =>
+        product.id === productId
+          ? { ...product, stock: result.newStock }
+          : product
+      );
+
+    setInventory(updateFn);
+    setPublicProducts(updateFn);
+
+    // 3. Trigger sync
+    SyncService.processQueue().catch(() => {});
+
+    return { newStock: result.newStock };
+  }, [inventory]);
+
+  /**
+   * Decrement stock after sale — local-first.
+   * SQLite stock is already decremented by OrderRepository.createOrderWithItems().
+   * This only updates React state. Backend stock decrement happens via order sync.
+   */
+  const decrementStockAfterSale = useCallback((cartItems) => {
+    const updateFn = (prev) =>
+      prev.map((product) => {
+        const cartItem = cartItems.find((item) => item.id === product.id);
+        if (cartItem) {
+          return { ...product, stock: Math.max(0, product.stock - cartItem.quantity) };
+        }
+        return product;
       });
 
-      const updateFn = (prev) =>
-        prev.map((product) =>
-          product.id === productId
-            ? {
-                ...product,
-                stock: Math.max(0, product.stock + adjustment),
-                ...(type === 'add' && unitCost ? { cost: unitCost } : {}),
-              }
-            : product
-        );
-
-      setInventory(updateFn);
-      setPublicProducts(updateFn);
-
-      return response.data;
-    } catch (err) {
-      console.error('Error adjusting stock:', err);
-      throw err;
-    }
+    setInventory(updateFn);
+    setPublicProducts(updateFn);
   }, []);
 
-  // Decrement stock after sale
-  const decrementStockAfterSale = useCallback(async (cartItems, orderId = null) => {
-    const items = cartItems.map((item) => ({
-      productId: item.id,
-      variantSku: item.variantSku || null,
-      quantity: item.quantity,
-    }));
-
+  /**
+   * Add new product — offline-first.
+   * Writes to SQLite, enqueues sync, returns immediately.
+   * Image uploads are handled by SyncService when online.
+   */
+  const addProduct = useCallback((productData) => {
+    // 1. Write to SQLite
+    let localId;
     try {
-      const response = await productService.bulkDecrementStock(items, orderId);
-
-      const updateFn = (prev) =>
-        prev.map((product) => {
-          const cartItem = cartItems.find((item) => item.id === product.id);
-          if (cartItem) {
-            return { ...product, stock: Math.max(0, product.stock - cartItem.quantity) };
-          }
-          return product;
-        });
-
-      setInventory(updateFn);
-      setPublicProducts(updateFn);
-
-      return response.data;
+      localId = ProductRepository.createLocal({
+        name: productData.name,
+        sku: productData.sku,
+        barcode: productData.barcode,
+        price: productData.price ?? 0,
+        cost: productData.cost ?? 0,
+        stock: productData.stock ?? 0,
+        category_id: productData.category_id,
+        description: productData.description,
+        image: productData.image ?? null,
+        is_active: productData.is_active ?? true,
+        is_ecommerce: productData.is_ecommerce ?? false,
+        low_stock_threshold: productData.low_stock_threshold ?? 10,
+        reorder_point: productData.reorder_point ?? 5,
+      });
     } catch (err) {
-      console.error('Error decrementing stock:', err);
-
-      // Optimistic update for offline mode
-      if (isOffline || err.code === 'NETWORK_ERROR') {
-        const updateFn = (prev) =>
-          prev.map((product) => {
-            const cartItem = cartItems.find((item) => item.id === product.id);
-            if (cartItem) {
-              return { ...product, stock: Math.max(0, product.stock - cartItem.quantity) };
-            }
-            return product;
-          });
-
-        setInventory(updateFn);
-        setPublicProducts(updateFn);
-        return { updated: items, failed: [] };
-      }
+      console.error('[ProductContext] SQLite product create failed:', err);
       throw err;
     }
-  }, [isOffline]);
 
-  // Add new product
-  const addProduct = useCallback(async (productData) => {
+    // 2. Enqueue sync (stores image URI for multipart upload)
     try {
-      const response = await productService.create(productData);
-      const newProduct = normalizeProduct(response.data);
-
-      // Add to inventory (user's product)
-      setInventory((prev) => [...prev, newProduct]);
-
-      // Also add to public products if it's an e-commerce product
-      if (newProduct.is_ecommerce) {
-        setPublicProducts((prev) => [...prev, newProduct]);
-      }
-
-      return newProduct;
+      SyncQueueRepository.enqueue({
+        entityType: 'product',
+        entityLocalId: localId,
+        action: 'create',
+        endpoint: '/products',
+        method: 'POST',
+        payload: {
+          ...productData,
+          _localImageUri: productData.image ?? null,
+        },
+      });
     } catch (err) {
-      console.error('Error adding product:', err);
-      throw err;
+      console.warn('[ProductContext] Sync enqueue failed:', err.message);
     }
+
+    // 3. Immediately add to React state
+    const newProduct = {
+      ...productData,
+      localId,
+      id: null,
+      syncStatus: 'pending',
+    };
+
+    setInventory((prev) => [...prev, newProduct]);
+    if (newProduct.is_ecommerce) {
+      setPublicProducts((prev) => [...prev, newProduct]);
+    }
+
+    // 4. Trigger sync
+    SyncService.processQueue().catch(() => {});
+
+    return newProduct;
   }, []);
 
-  // Update product
-  const updateProduct = useCallback(async (productId, updates) => {
+  /**
+   * Update product — offline-first.
+   * Writes to SQLite, enqueues sync, returns immediately.
+   */
+  const updateProduct = useCallback((productId, updates) => {
+    // 1. Update SQLite
     try {
-      const response = await productService.update(productId, updates);
-      const updatedProduct = normalizeProduct(response.data);
-
-      const updateFn = (prev) =>
-        prev.map((product) =>
-          product.id === productId
-            ? { ...product, ...updatedProduct }
-            : product
-        );
-
-      setInventory(updateFn);
-      setPublicProducts(updateFn);
-
-      return updatedProduct;
+      ProductRepository.updateLocal(productId, updates);
     } catch (err) {
-      console.error('Error updating product:', err);
+      console.error('[ProductContext] SQLite product update failed:', err);
       throw err;
     }
+
+    // 2. Enqueue sync
+    try {
+      const product = ProductRepository.getById(productId);
+      SyncQueueRepository.enqueue({
+        entityType: 'product',
+        entityLocalId: product?.local_id || `server-${productId}`,
+        action: 'update',
+        endpoint: `/products/${productId}`,
+        method: 'PUT',
+        payload: {
+          ...updates,
+          _localImageUri: updates.image ?? null,
+        },
+      });
+    } catch (err) {
+      console.warn('[ProductContext] Sync enqueue failed:', err.message);
+    }
+
+    // 3. Update React state immediately
+    const updateFn = (prev) =>
+      prev.map((product) =>
+        product.id === productId
+          ? { ...product, ...updates, syncStatus: 'pending' }
+          : product
+      );
+
+    setInventory(updateFn);
+    setPublicProducts(updateFn);
+
+    // 4. Trigger sync
+    SyncService.processQueue().catch(() => {});
+
+    return { id: productId, ...updates };
   }, []);
 
-  // Delete product
-  const deleteProduct = useCallback(async (productId) => {
+  /**
+   * Delete product — offline-first.
+   * Marks deleted in SQLite, enqueues sync, removes from state immediately.
+   */
+  const deleteProduct = useCallback((productId) => {
+    // 1. Mark deleted in SQLite
     try {
-      await productService.delete(productId);
-
-      const filterFn = (prev) => prev.filter((product) => product.id !== productId);
-
-      setInventory(filterFn);
-      setPublicProducts(filterFn);
+      ProductRepository.markDeleted(productId);
     } catch (err) {
-      console.error('Error deleting product:', err);
-      throw err;
+      console.warn('[ProductContext] SQLite product delete failed:', err.message);
     }
+
+    // 2. Enqueue sync
+    try {
+      const product = ProductRepository.getById(productId);
+      SyncQueueRepository.enqueue({
+        entityType: 'product',
+        entityLocalId: product?.local_id || `server-${productId}`,
+        action: 'delete',
+        endpoint: `/products/${productId}`,
+        method: 'DELETE',
+      });
+    } catch (err) {
+      console.warn('[ProductContext] Sync enqueue failed:', err.message);
+    }
+
+    // 3. Remove from React state immediately
+    const filterFn = (prev) => prev.filter((product) => product.id !== productId);
+    setInventory(filterFn);
+    setPublicProducts(filterFn);
+
+    // 4. Trigger sync
+    SyncService.processQueue().catch(() => {});
   }, []);
 
   // Silent product updates for real-time sync (no loading state)
@@ -408,6 +658,13 @@ export function ProductProvider({ children }) {
       });
     }
 
+    // Update SQLite
+    try {
+      ProductRepository.upsertFromServer(productData);
+    } catch (dbErr) {
+      console.warn('[ProductContext] SQLite silent add failed:', dbErr.message);
+    }
+
     console.log('[ProductContext] Product added silently:', normalizedProduct.id);
   }, []);
 
@@ -434,6 +691,21 @@ export function ProductProvider({ children }) {
     setInventory(updateFn);
     setPublicProducts(updateFn);
 
+    // Update SQLite (only full products, not partial stock updates)
+    if (isFullProduct) {
+      try {
+        ProductRepository.upsertFromServer(productData);
+      } catch (dbErr) {
+        console.warn('[ProductContext] SQLite silent update failed:', dbErr.message);
+      }
+    } else if (productData.stock !== undefined) {
+      try {
+        ProductRepository.updateStock(productData.id, productData.stock);
+      } catch (dbErr) {
+        console.warn('[ProductContext] SQLite stock sync failed:', dbErr.message);
+      }
+    }
+
     console.log('[ProductContext] Product updated silently:', updates.id);
   }, []);
 
@@ -449,6 +721,13 @@ export function ProductProvider({ children }) {
     setInventory(filterFn);
     setPublicProducts(filterFn);
 
+    // Mark deleted in SQLite
+    try {
+      ProductRepository.markDeleted(productId);
+    } catch (dbErr) {
+      console.warn('[ProductContext] SQLite silent delete failed:', dbErr.message);
+    }
+
     console.log('[ProductContext] Product removed silently:', productId);
   }, []);
 
@@ -462,18 +741,29 @@ export function ProductProvider({ children }) {
     return publicProducts.find((product) => product.id === productId);
   }, [publicProducts]);
 
-  // Get product by SKU
+  // Get product by SKU — check in-memory, then SQLite, then API
   const getProductBySku = useCallback(async (sku, localOnly = true) => {
-    // Try inventory first
+    // Try in-memory first
     let localProduct = inventory.find(
       (product) => product.sku?.toUpperCase() === sku?.toUpperCase()
     );
 
-    // Try public products
     if (!localProduct) {
       localProduct = publicProducts.find(
         (product) => product.sku?.toUpperCase() === sku?.toUpperCase()
       );
+    }
+
+    // Try SQLite
+    if (!localProduct) {
+      try {
+        const dbProduct = ProductRepository.getBySku(sku);
+        if (dbProduct) {
+          localProduct = normalizeLocalProduct(dbProduct);
+        }
+      } catch (err) {
+        console.warn('[ProductContext] SQLite SKU lookup failed:', err.message);
+      }
     }
 
     if (localProduct || localOnly) {
@@ -491,12 +781,24 @@ export function ProductProvider({ children }) {
     }
   }, [inventory, publicProducts]);
 
-  // Get product by barcode
+  // Get product by barcode — check in-memory, then SQLite, then API
   const getProductByBarcode = useCallback(async (barcode) => {
     let localProduct = inventory.find((product) => product.barcode === barcode);
 
     if (!localProduct) {
       localProduct = publicProducts.find((product) => product.barcode === barcode);
+    }
+
+    // Try SQLite
+    if (!localProduct) {
+      try {
+        const dbProduct = ProductRepository.getByBarcode(barcode);
+        if (dbProduct) {
+          localProduct = normalizeLocalProduct(dbProduct);
+        }
+      } catch (err) {
+        console.warn('[ProductContext] SQLite barcode lookup failed:', err.message);
+      }
     }
 
     if (localProduct) {

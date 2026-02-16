@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from '../services/authService';
 import { hasPermission as checkRolePermission, ROLES } from '../utils/permissions';
+import SyncManager from '../sync/SyncManager';
 
 const AuthContext = createContext();
 
@@ -77,6 +78,12 @@ export function AuthProvider({ children }) {
       const { user } = await authService.login(email, password);
       const normalized = normalizeUser(user);
       setCurrentUser(normalized);
+
+      // Trigger initial sync to populate SQLite with server data
+      SyncManager.initialSync().catch((err) =>
+        console.warn('[Auth] Initial sync after login failed:', err.message)
+      );
+
       return normalized;
     } catch (err) {
       const errorMessage = err.message || 'Login failed';
@@ -94,6 +101,12 @@ export function AuthProvider({ children }) {
       await authService.logout();
       // Clear saved screen so next login starts fresh
       await AsyncStorage.removeItem('@vendora_current_screen');
+      // Clear local offline data
+      try {
+        SyncManager.clearAllLocalData();
+      } catch (err) {
+        console.warn('[Auth] Error clearing local data on logout:', err.message);
+      }
       setCurrentUser(null);
       setError(null);
     } catch (err) {

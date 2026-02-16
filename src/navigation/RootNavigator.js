@@ -17,6 +17,8 @@ import StoreScreen from "../screens/StoreScreen";
 import AdminScreen from "../screens/AdminScreen";
 import LedgerScreen from "../screens/LedgerScreen";
 import FloatingNav from "../components/FloatingNav";
+import SyncStatusBar from "../components/SyncStatusBar";
+import SyncQueueModal from "../components/SyncQueueModal";
 
 const { width } = Dimensions.get('window');
 
@@ -95,6 +97,7 @@ export default function RootNavigator() {
 
   const [currentScreen, setCurrentScreen] = useState(null);
   const [hasLoggedInOnce, setHasLoggedInOnce] = useState(false);
+  const [showSyncQueue, setShowSyncQueue] = useState(false);
   const slideAnim = useRef(new Animated.Value(0)).current;
 
   // Get available screens based on user role
@@ -208,6 +211,7 @@ export default function RootNavigator() {
 
   return (
     <View style={styles.container}>
+      <SyncStatusBar onPress={() => setShowSyncQueue(true)} />
       <Animated.View
         style={[
           styles.screenContainer,
@@ -223,6 +227,11 @@ export default function RootNavigator() {
         isAuthenticated={isAuthenticated}
         currentUser={currentUser}
         availableScreens={availableScreens}
+      />
+
+      <SyncQueueModal
+        visible={showSyncQueue}
+        onClose={() => setShowSyncQueue(false)}
       />
     </View>
   );

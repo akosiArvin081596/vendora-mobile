@@ -1,5 +1,6 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Crypto from 'expo-crypto';
 import { API_URL } from '../config/env';
 
 // Create axios instance with default config
@@ -113,7 +114,7 @@ const resolveErrorCode = (data, fallback) => {
   return fallback;
 };
 
-// Request interceptor - add auth token to requests
+// Request interceptor - add auth token and idempotency key
 api.interceptors.request.use(
   async (config) => {
     try {
@@ -124,6 +125,13 @@ api.interceptors.request.use(
     } catch (error) {
       console.error('Error getting auth token:', error);
     }
+
+    // Auto-attach idempotency key to mutation requests (if not already set)
+    const method = (config.method || '').toUpperCase();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !config.headers['X-Idempotency-Key']) {
+      config.headers['X-Idempotency-Key'] = Crypto.randomUUID();
+    }
+
     return config;
   },
   (error) => {

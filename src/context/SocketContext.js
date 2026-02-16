@@ -4,6 +4,7 @@ import socketService from '../services/socketService';
 import { useAuth } from './AuthContext';
 import { useProducts } from './ProductContext';
 import { useOrders } from './OrderContext';
+import SyncManager from '../sync/SyncManager';
 
 const SocketContext = createContext(null);
 
@@ -173,6 +174,12 @@ export function SocketProvider({ children }) {
         setIsConnected(true);
         // Setup event listeners after connection is established
         setupEventListeners();
+        // Trigger incremental sync on reconnect to catch missed updates
+        if (currentUser) {
+          SyncManager.incrementalSync().catch((err) =>
+            console.warn('[Socket] Incremental sync on reconnect failed:', err.message)
+          );
+        }
       });
 
       socket.on('disconnect', () => {

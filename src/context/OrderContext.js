@@ -1,6 +1,8 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import orderService from '../services/orderService';
 import { useAuth } from './AuthContext';
+import OrderRepository from '../db/repositories/OrderRepository';
+import SyncService from '../sync/SyncService';
 
 const OrderContext = createContext();
 
@@ -38,8 +40,10 @@ const mapBackendOrder = (order) => {
   return {
     id: order.order_number || `ORD-${order.id}`,
     backendId: order.id,
+    localId: order.local_id || null,
     transactionId: order.order_number || `ORD-${order.id}`,
     status: order.status,
+    syncStatus: order.sync_status || 'synced',
     createdAt: new Date(order.ordered_at || order.created_at),
     customerName: order.customer?.name || 'Walk-in Customer',
     items,
@@ -56,13 +60,78 @@ const mapBackendOrder = (order) => {
   };
 };
 
+/**
+ * Map a local SQLite order row to the frontend format.
+ */
+const mapLocalOrder = (row) => {
+  const total = row.total != null ? row.total / 100 : 0;
+  const subtotal = row.subtotal != null ? row.subtotal / 100 : 0;
+
+  return {
+    id: row.order_number || row.local_id,
+    backendId: row.id || null,
+    localId: row.local_id,
+    transactionId: row.order_number || row.local_id,
+    status: row.status,
+    syncStatus: row.sync_status || 'pending',
+    createdAt: new Date(row.ordered_at || row.created_at),
+    customerName: 'Walk-in Customer',
+    items: [],
+    subtotal,
+    total,
+    discount: row.discount != null ? row.discount / 100 : 0,
+    discountLabel: 'None',
+    tax: row.tax != null ? row.tax / 100 : 0,
+    taxRate: 0,
+    paymentMethod: 'cash',
+    amountTendered: total,
+    change: 0,
+    vatExempt: false,
+  };
+};
+
 export function OrderProvider({ children }) {
   const { currentUser } = useAuth();
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const ordersLoaded = useRef(false);
 
-  // Fetch orders from backend
+  /**
+   * Load orders from SQLite for instant display.
+   */
+  const loadOrdersFromLocal = useCallback(() => {
+    try {
+      const rows = OrderRepository.getAll();
+      if (rows.length > 0) {
+        const localOrders = rows.map(mapLocalOrder);
+        setOrders(localOrders);
+        ordersLoaded.current = true;
+        return localOrders;
+      }
+    } catch (err) {
+      console.warn('[OrderContext] Error loading local orders:', err.message);
+    }
+    return [];
+  }, []);
+
+  /**
+   * Fetch orders from API (local-first, then background refresh).
+   */
   const fetchOrders = useCallback(async (params = {}) => {
+    const forceRefresh = params.forceRefresh;
+
+    if (ordersLoaded.current && !forceRefresh) {
+      return orders;
+    }
+
+    // Step 1: Load from SQLite instantly
+    const localData = loadOrdersFromLocal();
+    if (localData.length > 0 && !forceRefresh) {
+      _backgroundRefreshOrders(params);
+      return localData;
+    }
+
+    // Step 2: Fetch from API
     try {
       setIsLoading(true);
       const response = await orderService.getOrders({
@@ -72,14 +141,48 @@ export function OrderProvider({ children }) {
 
       const backendOrders = (response.data || []).map(mapBackendOrder);
       setOrders(backendOrders);
+      ordersLoaded.current = true;
+
+      // Cache to SQLite
+      try {
+        OrderRepository.bulkUpsertFromServer(response.data || []);
+      } catch (dbErr) {
+        console.warn('[OrderContext] Error caching orders:', dbErr.message);
+      }
+
       return backendOrders;
     } catch (err) {
-      console.error('Error fetching orders:', err);
+      console.error('[OrderContext] Error fetching orders:', err);
+      // Fallback to local
+      if (!ordersLoaded.current) {
+        loadOrdersFromLocal();
+      }
       return orders;
     } finally {
       setIsLoading(false);
     }
-  }, [orders]);
+  }, [orders, loadOrdersFromLocal]);
+
+  /**
+   * Background refresh orders from API.
+   */
+  const _backgroundRefreshOrders = useCallback(async (params = {}) => {
+    try {
+      const response = await orderService.getOrders({
+        per_page: 50,
+        ...params,
+      });
+      const backendOrders = (response.data || []).map(mapBackendOrder);
+
+      if (backendOrders.length > 0) {
+        OrderRepository.bulkUpsertFromServer(response.data || []);
+        setOrders(backendOrders);
+        ordersLoaded.current = true;
+      }
+    } catch (err) {
+      console.warn('[OrderContext] Background refresh failed:', err.message);
+    }
+  }, []);
 
   // Load orders when user is authenticated
   useEffect(() => {
@@ -87,60 +190,66 @@ export function OrderProvider({ children }) {
       fetchOrders();
     } else {
       setOrders([]);
+      ordersLoaded.current = false;
     }
   }, [currentUser]);
 
-  // Add a new order via backend API, then create payment
-  const addOrder = useCallback(async (orderData) => {
-    // Build items array for backend
-    const items = (orderData.items || []).map((item) => ({
-      product_id: item.id,
-      quantity: item.quantity,
-    }));
-
-    // Derive ordered_at from checkout data
+  /**
+   * Add a new order — offline-first.
+   * Writes to SQLite immediately, enqueues sync, triggers queue processing.
+   * Returns instantly without waiting for the server.
+   */
+  const addOrder = useCallback((orderData) => {
     const orderedAt = orderData.timestamp
       ? new Date(orderData.timestamp).toISOString()
       : new Date().toISOString();
 
-    // 1. Create order on backend
-    const orderResponse = await orderService.createOrder({
-      customer_id: orderData.customerId || null,
-      ordered_at: orderedAt,
-      status: 'completed',
-      items,
-    });
+    // 1. Write to SQLite + enqueue sync (atomic transaction)
+    let result;
+    try {
+      result = OrderRepository.createOrderWithItems({
+        items: orderData.items || [],
+        subtotal: orderData.subtotal || 0,
+        discount: orderData.discount || 0,
+        tax: orderData.tax || 0,
+        total: orderData.total || 0,
+        paymentMethod: orderData.paymentMethod || 'cash',
+        amountTendered: orderData.amountTendered || orderData.total || 0,
+        customerId: orderData.customerId || null,
+        notes: orderData.notes || null,
+        userId: currentUser?.id || null,
+        orderedAt,
+      });
+    } catch (err) {
+      console.error('[OrderContext] SQLite order creation failed:', err);
+      throw err;
+    }
 
-    const createdOrder = orderResponse.data;
-
-    // 2. Create payment on backend
-    const paymentAmount = Math.round((orderData.total || 0) * 100);
-
-    await orderService.createPayment({
-      order_id: createdOrder.id,
-      paid_at: orderedAt,
-      amount: paymentAmount,
-      method: mapPaymentMethod(orderData.paymentMethod),
-      status: 'completed',
-    });
-
-    // 3. Add to local state for immediate UI update
+    // 2. Immediately add to React state for UI update
     const frontendOrder = {
       ...orderData,
-      id: createdOrder.order_number || `ORD-${createdOrder.id}`,
-      backendId: createdOrder.id,
-      transactionId: orderData.transactionId || createdOrder.order_number,
+      id: orderData.transactionId || result.orderLocalId,
+      localId: result.orderLocalId,
+      backendId: null,
+      transactionId: orderData.transactionId || result.orderLocalId,
       status: 'completed',
+      syncStatus: 'pending',
       createdAt: orderData.timestamp || new Date(),
     };
 
     setOrders((prev) => [frontendOrder, ...prev]);
+
+    // 3. Trigger sync queue processing (fire-and-forget)
+    SyncService.processQueue().catch((err) =>
+      console.warn('[OrderContext] Sync queue processing failed:', err.message)
+    );
+
     return frontendOrder;
-  }, []);
+  }, [currentUser]);
 
   // Get order by ID
   const getOrderById = useCallback((id) => {
-    return orders.find((order) => order.id === id || order.backendId === id);
+    return orders.find((order) => order.id === id || order.backendId === id || order.localId === id);
   }, [orders]);
 
   // Get today's orders

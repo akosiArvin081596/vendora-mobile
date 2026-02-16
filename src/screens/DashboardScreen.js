@@ -13,6 +13,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { useOrders } from '../context/OrderContext';
 import { useProducts } from '../context/ProductContext';
+import { useSync } from '../context/SyncContext';
+import { useNetwork } from '../context/NetworkContext';
 
 const { width } = Dimensions.get('window');
 const isWide = width >= 768;
@@ -21,6 +23,8 @@ export default function DashboardScreen() {
   const { currentUser } = useAuth();
   const { orders } = useOrders();
   const { inventory } = useProducts();
+  const { counts, hasPendingWork, hasDeadItems, lastSyncedAt } = useSync();
+  const { isOnline } = useNetwork();
   const [refreshing, setRefreshing] = useState(false);
   const [stats, setStats] = useState({
     todaySales: 0,
@@ -251,6 +255,49 @@ export default function DashboardScreen() {
             </View>
           )}
         </View>
+
+        {/* Sync Health Card */}
+        {(!isOnline || hasPendingWork || hasDeadItems) && (
+          <View className="mb-6">
+            <View
+              className={`rounded-xl p-4 border ${
+                !isOnline
+                  ? 'bg-amber-500/10 border-amber-500/30'
+                  : hasDeadItems
+                  ? 'bg-red-500/10 border-red-500/30'
+                  : 'bg-vendora-purple/10 border-vendora-purple/30'
+              }`}
+            >
+              <View className="flex-row items-center">
+                <Ionicons
+                  name={!isOnline ? 'cloud-offline-outline' : hasDeadItems ? 'alert-circle-outline' : 'sync-outline'}
+                  size={24}
+                  color={!isOnline ? '#eab308' : hasDeadItems ? '#ef4444' : '#a855f7'}
+                />
+                <View className="ml-3 flex-1">
+                  <Text
+                    className={`font-semibold ${
+                      !isOnline ? 'text-amber-400' : hasDeadItems ? 'text-red-400' : 'text-vendora-purple'
+                    }`}
+                  >
+                    {!isOnline ? 'Offline Mode' : hasDeadItems ? 'Sync Issues' : 'Syncing'}
+                  </Text>
+                  <Text
+                    className={`text-sm ${
+                      !isOnline ? 'text-amber-400/80' : hasDeadItems ? 'text-red-400/80' : 'text-vendora-purple/80'
+                    }`}
+                  >
+                    {!isOnline
+                      ? `${counts.pending + counts.in_progress} change${counts.pending + counts.in_progress !== 1 ? 's' : ''} will sync when online`
+                      : hasDeadItems
+                      ? `${counts.dead} item${counts.dead !== 1 ? 's' : ''} failed to sync`
+                      : `${counts.pending + counts.in_progress} change${counts.pending + counts.in_progress !== 1 ? 's' : ''} pending`}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
 
         {/* Low Stock Alert */}
         {stats.lowStockItems > 0 ? (
