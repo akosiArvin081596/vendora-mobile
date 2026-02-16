@@ -77,6 +77,12 @@ const SyncService = {
           SyncQueueRepository.markCompleted(item.id);
           synced++;
         } catch (error) {
+          console.error(`[Sync] FAILED ${item.entity_type}:${item.entity_local_id}`, JSON.stringify({
+            message: error?.message,
+            code: error?.code,
+            endpoint: item.endpoint,
+            serverMessage: error?.details || error?.response?.data?.error?.message || error?.response?.data?.message || 'no details',
+          }));
           this._handleError(item, error);
         }
       }
@@ -160,7 +166,9 @@ const SyncService = {
       ...config,
       headers: {
         ...config.headers,
-        'Content-Type': 'multipart/form-data',
+        // Remove default 'application/json' Content-Type so Axios auto-sets
+        // multipart/form-data with the correct boundary for FormData.
+        'Content-Type': undefined,
       },
       timeout: 60000,
     };
