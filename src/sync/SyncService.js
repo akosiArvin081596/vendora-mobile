@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system';
 import api from '../services/api';
 import SyncQueueRepository from '../db/repositories/SyncQueueRepository';
 import ConflictResolver from './ConflictResolver';
@@ -26,34 +27,40 @@ const isLocalFile = (uri) => {
 };
 
 /**
- * Convert a base64 data URI to a File object (for web).
+ * Read a local image file and return a base64 data URI.
+ * Works on both native (file://, content://) and web (blob:, data:) URIs.
  */
-const dataUriToFile = (dataUri, filename = 'image.jpg') => {
-  const [header, base64Data] = dataUri.split(',');
-  const mimeMatch = header.match(/data:(.+?);/);
-  const type = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-  const ext = type.split('/')[1] || 'jpg';
-  const finalFilename = filename.includes('.') ? filename : `${filename}.${ext}`;
+const imageToBase64 = async (uri) => {
+  if (!uri) return null;
 
-  const byteString = atob(base64Data);
-  const ab = new ArrayBuffer(byteString.length);
-  const ia = new Uint8Array(ab);
-  for (let i = 0; i < byteString.length; i++) {
-    ia[i] = byteString.charCodeAt(i);
+  // Already a data URI — return as-is
+  if (uri.startsWith('data:')) {
+    return uri;
   }
-  return new File([ab], finalFilename, { type });
-};
 
-/**
- * Convert blob URL to File object (for web).
- */
-const blobUrlToFile = async (blobUrl, filename = 'image.jpg') => {
-  const response = await fetch(blobUrl);
-  const blob = await response.blob();
-  const type = blob.type || 'image/jpeg';
-  const ext = type.split('/')[1] || 'jpg';
-  const finalFilename = filename.includes('.') ? filename : `${filename}.${ext}`;
-  return new File([blob], finalFilename, { type });
+  // Web: blob URL — fetch and convert
+  if (Platform.OS === 'web' && uri.startsWith('blob:')) {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // Native (Android/iOS): read file via expo-file-system
+  const base64Data = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+
+  // Detect MIME type from extension
+  const ext = uri.split('.').pop()?.toLowerCase() || 'jpg';
+  const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+  const mime = mimeMap[ext] || 'image/jpeg';
+
+  return `data:${mime};base64,${base64Data}`;
 };
 
 /**
@@ -120,7 +127,7 @@ const SyncService = {
 
   /**
    * Send a sync queue item to the server.
-   * Handles both JSON and multipart (image upload) payloads.
+   * Images are sent as base64 JSON (not multipart) to bypass CDN file-upload blocking.
    */
   async _sendToServer(item) {
     const payload = JSON.parse(item.payload);
@@ -131,11 +138,20 @@ const SyncService = {
       headers: {
         'X-Idempotency-Key': item.idempotency_key,
       },
+      timeout: 60000,
     };
 
-    // Check if this needs multipart (has a local image file)
+    // Convert local image to base64 and add as image_base64 field
     if (localImageUri && isLocalFile(localImageUri) && (item.method === 'POST' || item.method === 'PUT')) {
-      return await this._sendMultipart(item, payload, localImageUri, config);
+      try {
+        const base64DataUri = await imageToBase64(localImageUri);
+        if (base64DataUri) {
+          payload.image_base64 = base64DataUri;
+          delete payload.image;
+        }
+      } catch (err) {
+        console.warn('[Sync] Failed to read image file, sending without image:', err.message);
+      }
     }
 
     switch (item.method.toUpperCase()) {
@@ -150,65 +166,6 @@ const SyncService = {
       default:
         throw new Error(`Unsupported HTTP method: ${item.method}`);
     }
-  },
-
-  /**
-   * Send a multipart request with image file.
-   */
-  async _sendMultipart(item, payload, imageUri, config) {
-    const formData = new FormData();
-
-    // Add all payload fields except internal ones
-    Object.entries(payload).forEach(([key, value]) => {
-      if (key === 'image') return;
-      if (key === 'bulk_pricing' && Array.isArray(value)) {
-        value.forEach((tier, index) => {
-          formData.append(`bulk_pricing[${index}][min_qty]`, tier.min_qty);
-          formData.append(`bulk_pricing[${index}][price]`, tier.price);
-        });
-      } else if (typeof value === 'boolean') {
-        formData.append(key, value ? '1' : '0');
-      } else if (value !== undefined && value !== null) {
-        formData.append(key, String(value));
-      }
-    });
-
-    // Add image file
-    if (Platform.OS === 'web') {
-      let file;
-      if (imageUri.startsWith('data:')) {
-        file = dataUriToFile(imageUri, 'product-image');
-      } else if (imageUri.startsWith('blob:')) {
-        file = await blobUrlToFile(imageUri, 'product-image');
-      } else {
-        throw new Error(`Unsupported web image URI: ${imageUri.substring(0, 30)}...`);
-      }
-      formData.append('image', file);
-    } else {
-      const filename = imageUri.split('/').pop();
-      const match = /\.(\w+)$/.exec(filename);
-      const type = match ? `image/${match[1]}` : 'image/jpeg';
-      formData.append('image', { uri: imageUri, name: filename, type });
-    }
-
-    const multipartConfig = {
-      ...config,
-      headers: {
-        ...config.headers,
-        // Remove default 'application/json' Content-Type so Axios auto-sets
-        // multipart/form-data with the correct boundary for FormData.
-        'Content-Type': undefined,
-      },
-      timeout: 60000,
-    };
-
-    if (item.method === 'PUT') {
-      // Laravel needs POST with _method for multipart PUT/PATCH
-      formData.append('_method', 'PATCH');
-      return await api.post(item.endpoint, formData, multipartConfig);
-    }
-
-    return await api.post(item.endpoint, formData, multipartConfig);
   },
 
   /**
