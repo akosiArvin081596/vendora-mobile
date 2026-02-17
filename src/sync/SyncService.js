@@ -1,5 +1,4 @@
 import { Platform } from 'react-native';
-import * as FileSystem from 'expo-file-system';
 import api from '../services/api';
 import SyncQueueRepository from '../db/repositories/SyncQueueRepository';
 import ConflictResolver from './ConflictResolver';
@@ -28,7 +27,8 @@ const isLocalFile = (uri) => {
 
 /**
  * Read a local image file and return a base64 data URI.
- * Works on both native (file://, content://) and web (blob:, data:) URIs.
+ * Uses fetch + FileReader which works on all platforms (native and web)
+ * without requiring expo-file-system.
  */
 const imageToBase64 = async (uri) => {
   if (!uri) return null;
@@ -38,29 +38,16 @@ const imageToBase64 = async (uri) => {
     return uri;
   }
 
-  // Web: blob URL — fetch and convert
-  if (Platform.OS === 'web' && uri.startsWith('blob:')) {
-    const response = await fetch(uri);
-    const blob = await response.blob();
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  }
+  // fetch works for file://, content://, and blob: URIs in React Native
+  const response = await fetch(uri);
+  const blob = await response.blob();
 
-  // Native (Android/iOS): read file via expo-file-system
-  const base64Data = await FileSystem.readAsStringAsync(uri, {
-    encoding: FileSystem.EncodingType.Base64,
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
   });
-
-  // Detect MIME type from extension
-  const ext = uri.split('.').pop()?.toLowerCase() || 'jpg';
-  const mimeMap = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
-  const mime = mimeMap[ext] || 'image/jpeg';
-
-  return `data:${mime};base64,${base64Data}`;
 };
 
 /**
