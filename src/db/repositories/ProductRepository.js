@@ -80,8 +80,11 @@ const ProductRepository = {
   upsertFromServer(product) {
     const db = getDatabase();
 
+    // Resolve user_id: direct field > vendor.id fallback
+    const incomingUserId = product.user_id ?? product.vendor?.id ?? null;
+
     const fieldValues = [
-      product.user_id ?? null,
+      incomingUserId,
       product.category_id ?? (typeof product.category === 'object' ? product.category?.id : null),
       product.name,
       product.sku ?? null,
@@ -107,8 +110,12 @@ const ProductRepository = {
 
     // If product has a server ID, try to find and update existing row first
     if (product.id) {
-      const existing = db.getFirstSync('SELECT local_id FROM products WHERE id = ?', [product.id]);
+      const existing = db.getFirstSync('SELECT local_id, user_id FROM products WHERE id = ?', [product.id]);
       if (existing) {
+        // Preserve existing user_id if incoming data doesn't have one
+        if (!incomingUserId && existing.user_id) {
+          fieldValues[0] = existing.user_id;
+        }
         db.runSync(updateSql, [...fieldValues, nowISO(), existing.local_id]);
         return existing.local_id;
       }
@@ -134,8 +141,11 @@ const ProductRepository = {
     } catch (e) {
       // Race condition: another sync path inserted this server ID first
       if (e.message?.includes('UNIQUE constraint failed') && product.id) {
-        const existing = db.getFirstSync('SELECT local_id FROM products WHERE id = ?', [product.id]);
+        const existing = db.getFirstSync('SELECT local_id, user_id FROM products WHERE id = ?', [product.id]);
         if (existing) {
+          if (!incomingUserId && existing.user_id) {
+            fieldValues[0] = existing.user_id;
+          }
           db.runSync(updateSql, [...fieldValues, nowISO(), existing.local_id]);
           return existing.local_id;
         }
