@@ -546,7 +546,7 @@ export default function StoreScreen() {
             >
               {flashSaleProducts.map((product) => (
                 <FlashSaleCard
-                  key={product.id}
+                  key={product.id || product.local_id}
                   product={product}
                   cartQuantity={getCartQuantity(product.id)}
                   onAddToCart={() => addToCart(product)}
@@ -582,7 +582,7 @@ export default function StoreScreen() {
             >
               {saleProducts.map((product) => (
                 <StoreProductCard
-                  key={product.id}
+                  key={product.id || product.local_id}
                   product={product}
                   cartQuantity={getCartQuantity(product.id)}
                   isWishlisted={wishlist.includes(product.id)}
@@ -630,7 +630,7 @@ export default function StoreScreen() {
               contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
             >
               {newArrivals.map((product) => (
-                <View key={product.id} style={{ width: 160 }}>
+                <View key={product.id || product.local_id} style={{ width: 160 }}>
                   <StoreProductCard
                     product={product}
                     cartQuantity={getCartQuantity(product.id)}
@@ -665,7 +665,7 @@ export default function StoreScreen() {
             >
               {recentlyViewedProducts.map((product) => (
                 <StoreProductCard
-                  key={product.id}
+                  key={product.id || product.local_id}
                   product={product}
                   cartQuantity={getCartQuantity(product.id)}
                   isWishlisted={wishlist.includes(product.id)}

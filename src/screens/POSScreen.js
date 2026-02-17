@@ -441,7 +441,7 @@ export default function POSScreen() {
               /* Product List */
               filteredProducts.map((product) => (
                 <ProductCard
-                  key={product.id}
+                  key={product.id || product.local_id}
                   product={product}
                   cartQuantity={cart.find((item) => item.id === product.id)?.quantity || 0}
                   onAdd={() => handleAddToCart(product)}

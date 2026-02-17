@@ -376,7 +376,7 @@ export default function InventoryScreen() {
             // List View
             filteredProducts.map((product) => (
               <View
-                key={product.id}
+                key={product.id || product.local_id}
                 className="bg-vendora-card rounded-2xl p-4 mb-3"
               >
                 <View className="flex-row items-start justify-between">
@@ -478,7 +478,7 @@ export default function InventoryScreen() {
             // Grid View
             <View className="flex-row flex-wrap" style={{ marginHorizontal: -6 }}>
               {filteredProducts.map((product) => (
-                <View key={product.id} style={{ width: '50%', paddingHorizontal: 6, marginBottom: 12 }}>
+                <View key={product.id || product.local_id} style={{ width: '50%', paddingHorizontal: 6, marginBottom: 12 }}>
                   <View className="bg-vendora-card rounded-2xl p-3">
                     {/* Stock Status Indicator */}
                     <View className={`absolute top-2 right-2 w-3 h-3 rounded-full ${getStockStatusColor(product.stock)}`} />
