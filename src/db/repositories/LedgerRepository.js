@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { getDatabase, nowISO } from '../database';
+import { getDatabase, nowISO, getCurrentUserId } from '../database';
 
 /**
  * Repository for ledger entries in local SQLite.
@@ -9,6 +9,12 @@ const LedgerRepository = {
     const db = getDatabase();
     const conditions = ["sync_status != 'deleted'"];
     const params = [];
+
+    const userId = getCurrentUserId();
+    if (userId) {
+      conditions.push('user_id = ?');
+      params.push(userId);
+    }
 
     if (filters.type) {
       conditions.push('type = ?');
@@ -50,6 +56,16 @@ const LedgerRepository = {
 
   getSummary() {
     const db = getDatabase();
+    const userId = getCurrentUserId();
+    const conditions = ["sync_status != 'deleted'"];
+    const params = [];
+
+    if (userId) {
+      conditions.push('user_id = ?');
+      params.push(userId);
+    }
+
+    const where = conditions.join(' AND ');
     const row = db.getFirstSync(`
       SELECT
         COALESCE(SUM(CASE WHEN type = 'stock_in' THEN quantity ELSE 0 END), 0) AS total_stock_in,
@@ -57,8 +73,8 @@ const LedgerRepository = {
         COALESCE(SUM(CASE WHEN type = 'sale' THEN amount ELSE 0 END), 0) AS total_revenue,
         COALESCE(SUM(CASE WHEN type = 'expense' THEN ABS(amount) ELSE 0 END), 0) AS total_expenses
       FROM ledger_entries
-      WHERE sync_status != 'deleted'
-    `);
+      WHERE ${where}
+    `, params);
 
     return {
       ...row,
@@ -148,6 +164,14 @@ const LedgerRepository = {
 
   getCount() {
     const db = getDatabase();
+    const userId = getCurrentUserId();
+    if (userId) {
+      const row = db.getFirstSync(
+        "SELECT COUNT(*) as count FROM ledger_entries WHERE sync_status != 'deleted' AND user_id = ?",
+        [userId]
+      );
+      return row?.count ?? 0;
+    }
     const row = db.getFirstSync(
       "SELECT COUNT(*) as count FROM ledger_entries WHERE sync_status != 'deleted'"
     );

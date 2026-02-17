@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { getDatabase, nowISO } from '../database';
+import { getDatabase, nowISO, getCurrentUserId } from '../database';
 import SyncQueueRepository from './SyncQueueRepository';
 
 /**
@@ -166,6 +166,13 @@ const OrderRepository = {
    */
   getAll() {
     const db = getDatabase();
+    const userId = getCurrentUserId();
+    if (userId) {
+      return db.getAllSync(
+        'SELECT * FROM orders WHERE user_id = ? ORDER BY ordered_at DESC, created_at DESC',
+        [userId]
+      );
+    }
     return db.getAllSync('SELECT * FROM orders ORDER BY ordered_at DESC, created_at DESC');
   },
 

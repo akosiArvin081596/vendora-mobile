@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { getDatabase, nowISO } from '../database';
+import { getDatabase, nowISO, getCurrentUserId } from '../database';
 
 /**
  * Repository for products in local SQLite.
@@ -11,6 +11,13 @@ const ProductRepository = {
    */
   getAll() {
     const db = getDatabase();
+    const userId = getCurrentUserId();
+    if (userId) {
+      return db.getAllSync(
+        'SELECT * FROM products WHERE sync_status != ? AND user_id = ? ORDER BY name',
+        ['deleted', userId]
+      );
+    }
     return db.getAllSync('SELECT * FROM products WHERE sync_status != ? ORDER BY name', ['deleted']);
   },
 
@@ -35,6 +42,13 @@ const ProductRepository = {
    */
   getByBarcode(barcode) {
     const db = getDatabase();
+    const userId = getCurrentUserId();
+    if (userId) {
+      return db.getFirstSync(
+        'SELECT * FROM products WHERE barcode = ? AND sync_status != ? AND user_id = ?',
+        [barcode, 'deleted', userId]
+      );
+    }
     return db.getFirstSync(
       'SELECT * FROM products WHERE barcode = ? AND sync_status != ?',
       [barcode, 'deleted']
@@ -46,6 +60,13 @@ const ProductRepository = {
    */
   getBySku(sku) {
     const db = getDatabase();
+    const userId = getCurrentUserId();
+    if (userId) {
+      return db.getFirstSync(
+        'SELECT * FROM products WHERE UPPER(sku) = UPPER(?) AND sync_status != ? AND user_id = ?',
+        [sku, 'deleted', userId]
+      );
+    }
     return db.getFirstSync(
       'SELECT * FROM products WHERE UPPER(sku) = UPPER(?) AND sync_status != ?',
       [sku, 'deleted']
@@ -258,6 +279,14 @@ const ProductRepository = {
    */
   getCount() {
     const db = getDatabase();
+    const userId = getCurrentUserId();
+    if (userId) {
+      const row = db.getFirstSync(
+        'SELECT COUNT(*) as count FROM products WHERE sync_status != ? AND user_id = ?',
+        ['deleted', userId]
+      );
+      return row?.count ?? 0;
+    }
     const row = db.getFirstSync('SELECT COUNT(*) as count FROM products WHERE sync_status != ?', ['deleted']);
     return row?.count ?? 0;
   },

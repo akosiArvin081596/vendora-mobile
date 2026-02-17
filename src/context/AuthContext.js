@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import authService from '../services/authService';
 import { hasPermission as checkRolePermission, ROLES } from '../utils/permissions';
 import SyncManager from '../sync/SyncManager';
+import { setCurrentUserId } from '../db/database';
 
 const AuthContext = createContext();
 
@@ -48,6 +49,7 @@ export function AuthProvider({ children }) {
       if (storedUser && hasToken) {
         // Use stored user immediately (offline-first)
         const normalized = normalizeUser(storedUser);
+        setCurrentUserId(normalized.id);
         setCurrentUser(normalized);
 
         // Try to validate token and refresh user data in background
@@ -63,6 +65,7 @@ export function AuthProvider({ children }) {
           } else {
             // Token invalid or expired — clear auth state
             await authService.logout();
+            setCurrentUserId(null);
             setCurrentUser(null);
           }
         }
@@ -85,6 +88,7 @@ export function AuthProvider({ children }) {
 
       const { user } = await authService.login(email, password);
       const normalized = normalizeUser(user);
+      setCurrentUserId(normalized.id);
       setCurrentUser(normalized);
 
       // Trigger initial sync to populate SQLite with server data
@@ -115,11 +119,13 @@ export function AuthProvider({ children }) {
       } catch (err) {
         console.warn('[Auth] Error clearing local data on logout:', err.message);
       }
+      setCurrentUserId(null);
       setCurrentUser(null);
       setError(null);
     } catch (err) {
       console.error('Error logging out:', err);
       // Still clear local state even if API call fails
+      setCurrentUserId(null);
       setCurrentUser(null);
     } finally {
       setIsLoading(false);
@@ -134,6 +140,7 @@ export function AuthProvider({ children }) {
 
       const { user } = await authService.register(userData);
       const normalized = normalizeUser(user);
+      setCurrentUserId(normalized.id);
       setCurrentUser(normalized);
       return normalized;
     } catch (err) {

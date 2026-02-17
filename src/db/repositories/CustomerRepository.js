@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { getDatabase, nowISO } from '../database';
+import { getDatabase, nowISO, getCurrentUserId } from '../database';
 
 /**
  * Repository for customers in local SQLite.
@@ -7,6 +7,13 @@ import { getDatabase, nowISO } from '../database';
 const CustomerRepository = {
   getAll() {
     const db = getDatabase();
+    const userId = getCurrentUserId();
+    if (userId) {
+      return db.getAllSync(
+        'SELECT * FROM customers WHERE sync_status != ? AND user_id = ? ORDER BY name',
+        ['deleted', userId]
+      );
+    }
     return db.getAllSync('SELECT * FROM customers WHERE sync_status != ? ORDER BY name', ['deleted']);
   },
 
@@ -22,7 +29,17 @@ const CustomerRepository = {
 
   search(query) {
     const db = getDatabase();
+    const userId = getCurrentUserId();
     const term = `%${query}%`;
+    if (userId) {
+      return db.getAllSync(
+        `SELECT * FROM customers
+         WHERE sync_status != 'deleted' AND user_id = ?
+           AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)
+         ORDER BY name`,
+        [userId, term, term, term]
+      );
+    }
     return db.getAllSync(
       `SELECT * FROM customers
        WHERE sync_status != 'deleted'
@@ -140,6 +157,14 @@ const CustomerRepository = {
 
   getCount() {
     const db = getDatabase();
+    const userId = getCurrentUserId();
+    if (userId) {
+      const row = db.getFirstSync(
+        'SELECT COUNT(*) as count FROM customers WHERE sync_status != ? AND user_id = ?',
+        ['deleted', userId]
+      );
+      return row?.count ?? 0;
+    }
     const row = db.getFirstSync('SELECT COUNT(*) as count FROM customers WHERE sync_status != ?', ['deleted']);
     return row?.count ?? 0;
   },
