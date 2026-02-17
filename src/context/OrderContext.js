@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import orderService from '../services/orderService';
 import { useAuth } from './AuthContext';
 import OrderRepository from '../db/repositories/OrderRepository';
+import SyncManager from '../sync/SyncManager';
 import SyncService from '../sync/SyncService';
 
 const OrderContext = createContext();
@@ -115,7 +115,7 @@ export function OrderProvider({ children }) {
   }, []);
 
   /**
-   * Fetch orders from API (local-first, then background refresh).
+   * Fetch orders — offline-first via SQLite + background pull-sync.
    */
   const fetchOrders = useCallback(async (params = {}) => {
     const forceRefresh = params.forceRefresh;
@@ -127,30 +127,21 @@ export function OrderProvider({ children }) {
     // Step 1: Load from SQLite instantly
     const localData = loadOrdersFromLocal();
     if (localData.length > 0 && !forceRefresh) {
-      _backgroundRefreshOrders(params);
+      _backgroundRefreshOrders();
       return localData;
     }
 
-    // Step 2: Fetch from API
+    // Step 2: No local data or force refresh — pull-sync via SyncManager
     try {
       setIsLoading(true);
-      const response = await orderService.getOrders({
-        per_page: 50,
-        ...params,
-      });
+      await SyncManager.syncOrders({ full: !ordersLoaded.current });
 
-      const backendOrders = (response.data || []).map(mapBackendOrder);
-      setOrders(backendOrders);
+      // Reload from SQLite after sync
+      const rows = OrderRepository.getAll();
+      const localOrders = rows.map(mapLocalOrder);
+      setOrders(localOrders);
       ordersLoaded.current = true;
-
-      // Cache to SQLite
-      try {
-        OrderRepository.bulkUpsertFromServer(response.data || []);
-      } catch (dbErr) {
-        console.warn('[OrderContext] Error caching orders:', dbErr.message);
-      }
-
-      return backendOrders;
+      return localOrders;
     } catch (err) {
       console.error('[OrderContext] Error fetching orders:', err);
       // Fallback to local
@@ -164,19 +155,17 @@ export function OrderProvider({ children }) {
   }, [orders, loadOrdersFromLocal]);
 
   /**
-   * Background refresh orders from API.
+   * Background refresh orders via SyncManager pull-sync.
    */
-  const _backgroundRefreshOrders = useCallback(async (params = {}) => {
+  const _backgroundRefreshOrders = useCallback(async () => {
     try {
-      const response = await orderService.getOrders({
-        per_page: 50,
-        ...params,
-      });
-      const backendOrders = (response.data || []).map(mapBackendOrder);
+      await SyncManager.syncOrders();
 
-      if (backendOrders.length > 0) {
-        OrderRepository.bulkUpsertFromServer(response.data || []);
-        setOrders(backendOrders);
+      // Reload from SQLite after sync
+      const rows = OrderRepository.getAll();
+      if (rows.length > 0) {
+        const localOrders = rows.map(mapLocalOrder);
+        setOrders(localOrders);
         ordersLoaded.current = true;
       }
     } catch (err) {

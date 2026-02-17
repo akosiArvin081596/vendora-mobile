@@ -46,17 +46,25 @@ export function AuthProvider({ children }) {
       const hasToken = await authService.isAuthenticated();
 
       if (storedUser && hasToken) {
-        // Validate token by fetching current user from API
+        // Use stored user immediately (offline-first)
+        const normalized = normalizeUser(storedUser);
+        setCurrentUser(normalized);
+
+        // Try to validate token and refresh user data in background
         try {
           const response = await authService.getCurrentUser();
           const user = normalizeUser(response.user || response);
           setCurrentUser(user);
-          // Update stored user with fresh data
           await authService.updateStoredUser(user);
         } catch (err) {
-          // Token invalid or expired - clear auth state
-          await authService.logout();
-          setCurrentUser(null);
+          // Network error — keep using stored user (offline)
+          if (err.code === 'NETWORK_ERROR') {
+            console.warn('[Auth] Offline — using stored user.');
+          } else {
+            // Token invalid or expired — clear auth state
+            await authService.logout();
+            setCurrentUser(null);
+          }
         }
       }
 

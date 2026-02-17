@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { formatCurrency, formatDateTime } from '../utils/checkoutHelpers';
-import ledgerService from '../services/ledgerService';
+import LedgerRepository from '../db/repositories/LedgerRepository';
 
 const TYPE_STYLES = {
   stock_in: {
@@ -69,14 +69,11 @@ export default function ProductHistoryModal({ visible, onClose, product }) {
     }
   }, [visible, product]);
 
-  const fetchHistory = async () => {
+  const fetchHistory = () => {
     setLoading(true);
     try {
-      const response = await ledgerService.getAll({
-        product_id: product.id,
-        per_page: 50,
-      });
-      setEntries(response.data || []);
+      const rows = LedgerRepository.getAll({ product_id: product.id });
+      setEntries(rows);
     } catch (error) {
       console.error('Failed to fetch product history:', error);
     } finally {

@@ -1,7 +1,4 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
-import productService from '../services/productService';
-import inventoryService from '../services/inventoryService';
-import categoryService from '../services/categoryService';
 import { products as fallbackProducts, categories as fallbackCategories } from '../data/products';
 import ProductRepository from '../db/repositories/ProductRepository';
 import CategoryRepository from '../db/repositories/CategoryRepository';
@@ -132,35 +129,62 @@ export function ProductProvider({ children }) {
     return [];
   }, []);
 
-  // Fetch public products (e-commerce) - with caching
+  /**
+   * Load public/ecommerce products from SQLite.
+   */
+  const loadPublicProductsFromLocal = useCallback(() => {
+    try {
+      const rows = ProductRepository.getAll();
+      // Filter to active ecommerce products
+      const ecommerceRows = rows.filter((r) => r.is_active === 1 && r.is_ecommerce === 1);
+      if (ecommerceRows.length > 0) {
+        const normalized = ecommerceRows.map(normalizeLocalProduct);
+        setPublicProducts(normalized);
+        productsLoaded.current = true;
+        return normalized;
+      }
+    } catch (err) {
+      console.warn('[ProductContext] Error loading local public products:', err.message);
+    }
+    return [];
+  }, []);
+
+  // Fetch public products (e-commerce) - offline-first via SQLite + pull-sync
   const fetchProducts = useCallback(async (options = {}) => {
-    const { forceRefresh = false, ...params } = options;
+    const { forceRefresh = false } = options;
 
     // Skip if already loaded and not forcing refresh
     if (productsLoaded.current && !forceRefresh) {
       return publicProducts;
     }
 
+    // Step 1: Load from SQLite
+    const localData = loadPublicProductsFromLocal();
+    if (localData.length > 0 && !forceRefresh) {
+      // Background pull-sync
+      _backgroundRefreshInventory();
+      return localData;
+    }
+
+    // Step 2: Pull-sync via SyncManager
     try {
       setIsLoadingProducts(true);
       setError(null);
 
-      const response = await productService.getAll({
-        limit: 100,
-        is_active: true,
-        ...params,
-      });
+      await SyncManager.syncProducts({ full: !productsLoaded.current });
 
-      const normalized = (response.data || []).map(normalizeProduct);
-
-      setPublicProducts(normalized);
-      productsLoaded.current = true;
-
-      if (response.pagination) {
-        setProductsPagination(response.pagination);
+      // Reload from SQLite
+      const reloaded = loadPublicProductsFromLocal();
+      if (reloaded.length > 0) {
+        setIsOffline(false);
+        return reloaded;
       }
-      setIsOffline(false);
-      return normalized;
+
+      // Use fallback only if no data at all
+      if (!productsLoaded.current) {
+        setPublicProducts(fallbackProducts);
+      }
+      return publicProducts;
     } catch (err) {
       console.error('Error fetching products:', err);
       setError(err.message);
@@ -168,62 +192,46 @@ export function ProductProvider({ children }) {
 
       // Use fallback only if no data loaded yet
       if (!productsLoaded.current) {
-        setPublicProducts(fallbackProducts);
+        const local = loadPublicProductsFromLocal();
+        if (local.length === 0) {
+          setPublicProducts(fallbackProducts);
+        }
       }
       return publicProducts;
     } finally {
       setIsLoadingProducts(false);
     }
-  }, [publicProducts]);
+  }, [publicProducts, loadPublicProductsFromLocal]);
 
-  // Fetch inventory (user's products) - local-first, then background API refresh
+  // Fetch inventory (user's products) - offline-first via SQLite + background pull-sync
   const fetchInventory = useCallback(async (options = {}) => {
-    const { forceRefresh = false, ...params } = options;
+    const { forceRefresh = false } = options;
 
     // Skip if already loaded and not forcing refresh
     if (inventoryLoaded.current && !forceRefresh) {
       return inventory;
     }
 
-    // Step 1: Load from SQLite immediately (instant)
+    // Step 1: Always load from SQLite first (instant)
     const localData = loadInventoryFromLocal();
     if (localData.length > 0 && !forceRefresh) {
-      // Data displayed from local — background-refresh from API
-      _backgroundRefreshInventory(params);
+      // Data displayed from local — background pull-sync
+      _backgroundRefreshInventory();
       return localData;
     }
 
-    // Step 2: No local data or force refresh — fetch from API
+    // Step 2: If force refresh or no local data, try pull-sync via SyncManager
     try {
       setIsLoadingInventory(true);
       setError(null);
 
-      const response = await inventoryService.getAll({
-        per_page: 100,
-        ...params,
-      });
+      await SyncManager.syncProducts({ full: !inventoryLoaded.current });
 
-      const apiProducts = response.data || [];
-      const normalized = apiProducts.map(normalizeProduct);
-
+      // Reload from SQLite after sync
+      const rows = ProductRepository.getAll();
+      const normalized = rows.map(normalizeLocalProduct);
       setInventory(normalized);
       inventoryLoaded.current = true;
-
-      // Cache to SQLite
-      try {
-        ProductRepository.bulkUpsertFromServer(apiProducts);
-      } catch (dbErr) {
-        console.warn('[ProductContext] Error caching products to SQLite:', dbErr.message);
-      }
-
-      if (response.meta) {
-        setInventoryPagination({
-          page: response.meta.current_page,
-          limit: response.meta.per_page,
-          total: response.meta.total,
-          totalPages: response.meta.last_page,
-        });
-      }
       setIsOffline(false);
       return normalized;
     } catch (err) {
@@ -231,13 +239,10 @@ export function ProductProvider({ children }) {
       setError(err.message);
       setIsOffline(true);
 
-      // Don't set fallback for inventory - user should see their own products only
-      if (!inventoryLoaded.current) {
-        // Try local as last resort
-        const local = loadInventoryFromLocal();
-        if (local.length === 0) {
-          setInventory([]);
-        }
+      // Always fall back to whatever is in SQLite
+      const local = loadInventoryFromLocal();
+      if (local.length === 0 && !inventoryLoaded.current) {
+        setInventory([]);
       }
       return inventory;
     } finally {
@@ -246,16 +251,16 @@ export function ProductProvider({ children }) {
   }, [inventory, loadInventoryFromLocal]);
 
   /**
-   * Background refresh: fetch from API and update SQLite + state silently.
+   * Background refresh: pull-sync via SyncManager and reload from SQLite.
    */
-  const _backgroundRefreshInventory = useCallback(async (params = {}) => {
+  const _backgroundRefreshInventory = useCallback(async () => {
     try {
-      const response = await inventoryService.getAll({ per_page: 100, ...params });
-      const apiProducts = response.data || [];
+      await SyncManager.syncProducts();
 
-      if (apiProducts.length > 0) {
-        ProductRepository.bulkUpsertFromServer(apiProducts);
-        const normalized = apiProducts.map(normalizeProduct);
+      // Reload from SQLite after sync
+      const rows = ProductRepository.getAll();
+      if (rows.length > 0) {
+        const normalized = rows.map(normalizeLocalProduct);
         setInventory(normalized);
         inventoryLoaded.current = true;
       }
@@ -266,7 +271,7 @@ export function ProductProvider({ children }) {
     }
   }, []);
 
-  // Fetch categories - local-first
+  // Fetch categories - offline-first via SQLite + background pull-sync
   const fetchCategories = useCallback(async (forceRefresh = false) => {
     if (categoriesLoaded.current && !forceRefresh) {
       return categories;
@@ -279,33 +284,17 @@ export function ProductProvider({ children }) {
       return localCats;
     }
 
-    // Step 2: Fetch from API
+    // Step 2: Pull-sync via SyncManager
     try {
       setIsLoadingCategories(true);
-      const response = await categoryService.getAll({ is_active: true });
+      await SyncManager.syncCategories({ full: !categoriesLoaded.current });
 
-      const apiCategories = response.data || [];
-
-      // Cache to SQLite
-      try {
-        CategoryRepository.bulkUpsertFromServer(apiCategories);
-      } catch (dbErr) {
-        console.warn('[ProductContext] Error caching categories to SQLite:', dbErr.message);
+      // Reload from SQLite
+      const reloaded = loadCategoriesFromLocal();
+      if (reloaded.length > 0) {
+        return reloaded;
       }
-
-      const formattedCategories = [
-        { value: 'all', label: 'All Categories', icon: 'grid-outline' },
-        ...apiCategories.map((cat) => ({
-          value: cat.slug || cat.id,
-          label: cat.name,
-          icon: cat.icon || 'cube-outline',
-          id: cat.id,
-        })),
-      ];
-
-      setCategories(formattedCategories);
-      categoriesLoaded.current = true;
-      return formattedCategories;
+      return categories;
     } catch (err) {
       console.error('Error fetching categories:', err);
       if (!categoriesLoaded.current) {
@@ -321,18 +310,18 @@ export function ProductProvider({ children }) {
   }, [categories, loadCategoriesFromLocal]);
 
   /**
-   * Background refresh categories.
+   * Background refresh categories via SyncManager.
    */
   const _backgroundRefreshCategories = useCallback(async () => {
     try {
-      const response = await categoryService.getAll({ is_active: true });
-      const apiCategories = response.data || [];
+      await SyncManager.syncCategories();
 
-      if (apiCategories.length > 0) {
-        CategoryRepository.bulkUpsertFromServer(apiCategories);
+      // Reload from SQLite
+      const rows = CategoryRepository.getAll();
+      if (rows.length > 0) {
         const formatted = [
           { value: 'all', label: 'All Categories', icon: 'grid-outline' },
-          ...apiCategories.map((cat) => ({
+          ...rows.map((cat) => ({
             value: cat.slug || cat.id,
             label: cat.name,
             icon: cat.icon || 'cube-outline',

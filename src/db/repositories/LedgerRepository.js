@@ -30,6 +30,11 @@ const LedgerRepository = {
       params.push(filters.date_to);
     }
 
+    if (filters.product_id) {
+      conditions.push('product_id = ?');
+      params.push(filters.product_id);
+    }
+
     if (filters.search) {
       conditions.push('(description LIKE ? OR product LIKE ? OR reference LIKE ?)');
       const term = `%${filters.search}%`;
