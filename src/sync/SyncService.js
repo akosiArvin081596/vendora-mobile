@@ -143,11 +143,12 @@ const SyncService = {
 
     // Convert local image to base64 and add as image_base64 field
     if (localImageUri && isLocalFile(localImageUri) && (item.method === 'POST' || item.method === 'PUT')) {
+      // Always remove the local file URI — server can't use it
+      delete payload.image;
       try {
         const base64DataUri = await imageToBase64(localImageUri);
         if (base64DataUri) {
           payload.image_base64 = base64DataUri;
-          delete payload.image;
         }
       } catch (err) {
         console.warn('[Sync] Failed to read image file, sending without image:', err.message);
