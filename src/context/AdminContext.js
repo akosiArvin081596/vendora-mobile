@@ -1,6 +1,9 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { adminApi } from '../api/admin';
+import AdminUserRepository from '../db/repositories/AdminUserRepository';
+import SyncQueueRepository from '../db/repositories/SyncQueueRepository';
+import SyncManager from '../sync/SyncManager';
+import SyncService from '../sync/SyncService';
 import {
   STORAGE_KEYS,
   defaultSettings,
@@ -11,6 +14,26 @@ import { useAuth } from './AuthContext';
 
 const AdminContext = createContext();
 
+/**
+ * Transform a SQLite admin_users row to frontend format.
+ */
+const normalizeLocalUser = (row) => {
+  if (!row) return null;
+  return {
+    id: row.id?.toString() ?? row.local_id,
+    local_id: row.local_id,
+    name: row.name,
+    email: row.email,
+    role: row.user_type,
+    status: row.status || 'active',
+    phone: row.phone || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastLoginAt: row.last_login_at,
+    sync_status: row.sync_status,
+  };
+};
+
 export function AdminProvider({ children }) {
   const { currentUser } = useAuth();
   const [users, setUsers] = useState([]);
@@ -20,6 +43,7 @@ export function AdminProvider({ children }) {
   const [activityLogs, setActivityLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const usersLoaded = useRef(false);
 
   // Initialize admin data
   useEffect(() => {
@@ -33,7 +57,7 @@ export function AdminProvider({ children }) {
     setError(null);
 
     try {
-      // Fetch users from backend API
+      // Fetch users (offline-first)
       await fetchUsers();
 
       // Load vendor applications from storage (placeholder for now)
@@ -66,224 +90,305 @@ export function AdminProvider({ children }) {
     }
   };
 
-  // ============ USER MANAGEMENT (API) ============
+  // ============ USER MANAGEMENT (Offline-First) ============
 
   /**
-   * Fetch users from backend API
+   * Load users from SQLite first, then background pull-sync.
    */
-  const fetchUsers = useCallback(async (params = {}) => {
+  const loadUsersFromLocal = useCallback((filters = {}) => {
     try {
-      setIsLoading(true);
-      const response = await adminApi.getUsers(params);
-
-      // Handle paginated response
-      if (response.data) {
-        // Transform backend data to match frontend expectations
-        const transformedUsers = response.data.map(user => ({
-          id: user.id.toString(),
-          name: user.name,
-          email: user.email,
-          role: user.user_type, // Map user_type to role for frontend
-          status: user.status || 'active',
-          phone: user.phone || '',
-          createdAt: user.created_at,
-          updatedAt: user.updated_at,
-          lastLoginAt: user.last_login_at,
-        }));
-        setUsers(transformedUsers);
-        setUsersPagination({
-          currentPage: response.current_page,
-          lastPage: response.last_page,
-          perPage: response.per_page,
-          total: response.total,
-        });
-      } else {
-        // Non-paginated response
-        const transformedUsers = (Array.isArray(response) ? response : []).map(user => ({
-          id: user.id.toString(),
-          name: user.name,
-          email: user.email,
-          role: user.user_type,
-          status: user.status || 'active',
-          phone: user.phone || '',
-          createdAt: user.created_at,
-          updatedAt: user.updated_at,
-          lastLoginAt: user.last_login_at,
-        }));
-        setUsers(transformedUsers);
+      const rows = AdminUserRepository.getAll(filters);
+      if (rows.length > 0) {
+        const normalized = rows.map(normalizeLocalUser);
+        setUsers(normalized);
+        usersLoaded.current = true;
+        return normalized;
       }
     } catch (err) {
-      console.error('Error fetching users:', err);
+      console.warn('[AdminContext] Error loading local users:', err.message);
+    }
+    return [];
+  }, []);
+
+  /**
+   * Fetch users — offline-first via SQLite + background pull-sync.
+   */
+  const fetchUsers = useCallback(async (params = {}) => {
+    // Step 1: Load from SQLite
+    const localData = loadUsersFromLocal(params);
+
+    if (localData.length > 0 && !params.forceRefresh) {
+      // Background pull-sync
+      _backgroundRefreshUsers();
+      return localData;
+    }
+
+    // Step 2: If no local data, do a synchronous pull-sync
+    try {
+      setIsLoading(true);
+      await SyncManager.syncAdminUsers({ full: true });
+
+      // Reload from SQLite
+      const rows = AdminUserRepository.getAll(params);
+      const normalized = rows.map(normalizeLocalUser);
+      setUsers(normalized);
+      usersLoaded.current = true;
+      return normalized;
+    } catch (err) {
+      console.error('[AdminContext] Error fetching users:', err.message);
       setError(err.message);
-      throw err;
+      // Return whatever local data exists
+      if (!usersLoaded.current) {
+        loadUsersFromLocal(params);
+      }
+      return users;
     } finally {
       setIsLoading(false);
     }
+  }, [users, loadUsersFromLocal]);
+
+  /**
+   * Background refresh users via SyncManager.
+   */
+  const _backgroundRefreshUsers = useCallback(async () => {
+    try {
+      await SyncManager.syncAdminUsers();
+
+      // Reload from SQLite
+      const rows = AdminUserRepository.getAll();
+      const normalized = rows.map(normalizeLocalUser);
+      setUsers(normalized);
+      usersLoaded.current = true;
+    } catch (err) {
+      console.warn('[AdminContext] Background refresh failed:', err.message);
+    }
   }, []);
 
   /**
-   * Create a new user via API
+   * Create a new user — offline-first.
    */
   const createUser = useCallback(async (userData) => {
+    // Transform frontend data to backend format
+    const apiData = {
+      name: userData.name,
+      email: userData.email,
+      password: userData.password,
+      user_type: userData.role,
+      phone: userData.phone || null,
+      status: userData.status || 'active',
+    };
+
+    // 1. Write to SQLite
+    let localId;
     try {
-      // Transform frontend data to backend format
-      const apiData = {
-        name: userData.name,
-        email: userData.email,
-        password: userData.password,
-        user_type: userData.role, // Map role to user_type for backend
-        phone: userData.phone || null,
-        status: userData.status || 'active',
-      };
-
-      const response = await adminApi.createUser(apiData);
-
-      // Transform response and add to local state
-      const newUser = {
-        id: response.user.id.toString(),
-        name: response.user.name,
-        email: response.user.email,
-        role: response.user.user_type,
-        status: response.user.status || 'active',
-        phone: response.user.phone || '',
-        createdAt: response.user.created_at,
-        updatedAt: response.user.updated_at,
-        lastLoginAt: response.user.last_login_at,
-      };
-
-      setUsers(prev => [newUser, ...prev]);
-
-      // Log activity locally
-      await logActivity(
-        ACTIVITY_ACTIONS.USER_CREATE,
-        'user',
-        newUser.id,
-        newUser.name,
-        { email: newUser.email, role: newUser.role }
-      );
-
-      return newUser;
+      localId = AdminUserRepository.createLocal({
+        name: apiData.name,
+        email: apiData.email,
+        user_type: apiData.user_type,
+        phone: apiData.phone,
+        status: apiData.status,
+      });
     } catch (err) {
-      console.error('Error creating user:', err);
-      const message = err.response?.data?.message || err.message || 'Failed to create user';
-      throw new Error(message);
+      console.error('[AdminContext] SQLite user create failed:', err);
+      throw err;
     }
+
+    // 2. Enqueue sync
+    try {
+      SyncQueueRepository.enqueue({
+        entityType: 'admin_user',
+        entityLocalId: localId,
+        action: 'create',
+        endpoint: '/admin/users',
+        method: 'POST',
+        payload: apiData,
+      });
+    } catch (err) {
+      console.warn('[AdminContext] Sync enqueue failed:', err.message);
+    }
+
+    // 3. Add to React state immediately
+    const newUser = normalizeLocalUser({
+      local_id: localId,
+      name: apiData.name,
+      email: apiData.email,
+      user_type: apiData.user_type,
+      phone: apiData.phone,
+      status: apiData.status,
+      sync_status: 'pending',
+      created_at: new Date().toISOString(),
+    });
+
+    setUsers(prev => [newUser, ...prev]);
+
+    // 4. Log activity locally
+    await logActivity(
+      ACTIVITY_ACTIONS.USER_CREATE,
+      'user',
+      newUser.id,
+      newUser.name,
+      { email: newUser.email, role: newUser.role }
+    );
+
+    // 5. Trigger sync
+    SyncService.processQueue().catch(() => {});
+
+    return newUser;
   }, []);
 
   /**
-   * Update a user via API
+   * Update a user — offline-first.
    */
   const updateUser = useCallback(async (userId, updates) => {
+    // Transform frontend data to backend format
+    const apiData = {};
+    if (updates.name) apiData.name = updates.name;
+    if (updates.email) apiData.email = updates.email;
+    if (updates.password) apiData.password = updates.password;
+    if (updates.role) apiData.user_type = updates.role;
+    if (updates.phone !== undefined) apiData.phone = updates.phone;
+    if (updates.status) apiData.status = updates.status;
+
+    // 1. Update SQLite
     try {
-      // Transform frontend data to backend format
-      const apiData = {};
-      if (updates.name) apiData.name = updates.name;
-      if (updates.email) apiData.email = updates.email;
-      if (updates.password) apiData.password = updates.password;
-      if (updates.role) apiData.user_type = updates.role;
-      if (updates.phone !== undefined) apiData.phone = updates.phone;
-      if (updates.status) apiData.status = updates.status;
-
-      const response = await adminApi.updateUser(userId, apiData);
-
-      // Transform response and update local state
-      const updatedUser = {
-        id: response.user.id.toString(),
-        name: response.user.name,
-        email: response.user.email,
-        role: response.user.user_type,
-        status: response.user.status || 'active',
-        phone: response.user.phone || '',
-        createdAt: response.user.created_at,
-        updatedAt: response.user.updated_at,
-        lastLoginAt: response.user.last_login_at,
-      };
-
-      setUsers(prev => prev.map(u => u.id === userId.toString() ? updatedUser : u));
-
-      // Log activity locally
-      await logActivity(
-        ACTIVITY_ACTIONS.USER_UPDATE,
-        'user',
-        userId,
-        updatedUser.name,
-        { changes: Object.keys(updates) }
-      );
-
-      return updatedUser;
+      AdminUserRepository.updateLocal(userId, apiData);
     } catch (err) {
-      console.error('Error updating user:', err);
-      const message = err.response?.data?.message || err.message || 'Failed to update user';
-      throw new Error(message);
+      console.error('[AdminContext] SQLite user update failed:', err);
+      throw err;
     }
-  }, []);
 
-  /**
-   * Delete a user via API
-   */
-  const deleteUser = useCallback(async (userId) => {
+    // 2. Enqueue sync
     try {
-      const user = users.find(u => u.id === userId.toString());
-
-      await adminApi.deleteUser(userId);
-
-      // Remove from local state
-      setUsers(prev => prev.filter(u => u.id !== userId.toString()));
-
-      // Log activity locally
-      if (user) {
-        await logActivity(
-          ACTIVITY_ACTIONS.USER_DELETE,
-          'user',
-          userId,
-          user.name,
-          { email: user.email, role: user.role }
-        );
-      }
+      const user = AdminUserRepository.getById(userId);
+      SyncQueueRepository.enqueue({
+        entityType: 'admin_user',
+        entityLocalId: user?.local_id || `server-${userId}`,
+        action: 'update',
+        endpoint: `/admin/users/${userId}`,
+        method: 'PUT',
+        payload: apiData,
+      });
     } catch (err) {
-      console.error('Error deleting user:', err);
-      const message = err.response?.data?.message || err.message || 'Failed to delete user';
-      throw new Error(message);
+      console.warn('[AdminContext] Sync enqueue failed:', err.message);
     }
+
+    // 3. Update React state immediately
+    const updatedUser = {
+      ...users.find(u => u.id === userId.toString()),
+      ...updates,
+      role: apiData.user_type || updates.role,
+      sync_status: 'pending',
+    };
+
+    setUsers(prev => prev.map(u => u.id === userId.toString() ? updatedUser : u));
+
+    // 4. Log activity locally
+    await logActivity(
+      ACTIVITY_ACTIONS.USER_UPDATE,
+      'user',
+      userId,
+      updatedUser.name,
+      { changes: Object.keys(updates) }
+    );
+
+    // 5. Trigger sync
+    SyncService.processQueue().catch(() => {});
+
+    return updatedUser;
   }, [users]);
 
   /**
-   * Change user status via API
+   * Delete a user — offline-first.
+   */
+  const deleteUser = useCallback(async (userId) => {
+    const user = users.find(u => u.id === userId.toString());
+
+    // 1. Mark deleted in SQLite
+    try {
+      AdminUserRepository.markDeleted(userId);
+    } catch (err) {
+      console.warn('[AdminContext] SQLite user delete failed:', err.message);
+    }
+
+    // 2. Enqueue sync
+    try {
+      const dbUser = AdminUserRepository.getById(userId);
+      SyncQueueRepository.enqueue({
+        entityType: 'admin_user',
+        entityLocalId: dbUser?.local_id || `server-${userId}`,
+        action: 'delete',
+        endpoint: `/admin/users/${userId}`,
+        method: 'DELETE',
+      });
+    } catch (err) {
+      console.warn('[AdminContext] Sync enqueue failed:', err.message);
+    }
+
+    // 3. Remove from React state immediately
+    setUsers(prev => prev.filter(u => u.id !== userId.toString()));
+
+    // 4. Log activity locally
+    if (user) {
+      await logActivity(
+        ACTIVITY_ACTIONS.USER_DELETE,
+        'user',
+        userId,
+        user.name,
+        { email: user.email, role: user.role }
+      );
+    }
+
+    // 5. Trigger sync
+    SyncService.processQueue().catch(() => {});
+  }, [users]);
+
+  /**
+   * Change user status — offline-first.
    */
   const changeUserStatus = useCallback(async (userId, newStatus) => {
+    const user = users.find(u => u.id === userId.toString());
+
+    // 1. Update SQLite
     try {
-      const user = users.find(u => u.id === userId.toString());
-
-      const response = await adminApi.changeUserStatus(userId, newStatus);
-
-      // Update local state
-      const updatedUser = {
-        id: response.user.id.toString(),
-        name: response.user.name,
-        email: response.user.email,
-        role: response.user.user_type,
-        status: response.user.status || 'active',
-        phone: response.user.phone || '',
-        createdAt: response.user.created_at,
-        updatedAt: response.user.updated_at,
-        lastLoginAt: response.user.last_login_at,
-      };
-
-      setUsers(prev => prev.map(u => u.id === userId.toString() ? updatedUser : u));
-
-      // Log activity locally
-      const actionType = newStatus === 'active'
-        ? ACTIVITY_ACTIONS.USER_ACTIVATE
-        : newStatus === 'suspended'
-          ? ACTIVITY_ACTIONS.USER_SUSPEND
-          : ACTIVITY_ACTIONS.USER_DEACTIVATE;
-
-      await logActivity(actionType, 'user', userId, user?.name || 'Unknown', { newStatus });
+      AdminUserRepository.updateLocal(userId, { status: newStatus });
     } catch (err) {
-      console.error('Error changing user status:', err);
-      const message = err.response?.data?.message || err.message || 'Failed to change user status';
-      throw new Error(message);
+      console.error('[AdminContext] SQLite status change failed:', err);
+      throw err;
     }
+
+    // 2. Enqueue sync
+    try {
+      const dbUser = AdminUserRepository.getById(userId);
+      SyncQueueRepository.enqueue({
+        entityType: 'admin_user',
+        entityLocalId: dbUser?.local_id || `server-${userId}`,
+        action: 'status_change',
+        endpoint: `/admin/users/${userId}/status`,
+        method: 'PATCH',
+        payload: { status: newStatus },
+      });
+    } catch (err) {
+      console.warn('[AdminContext] Sync enqueue failed:', err.message);
+    }
+
+    // 3. Update React state immediately
+    setUsers(prev => prev.map(u =>
+      u.id === userId.toString()
+        ? { ...u, status: newStatus, sync_status: 'pending' }
+        : u
+    ));
+
+    // 4. Log activity locally
+    const actionType = newStatus === 'active'
+      ? ACTIVITY_ACTIONS.USER_ACTIVATE
+      : newStatus === 'suspended'
+        ? ACTIVITY_ACTIONS.USER_SUSPEND
+        : ACTIVITY_ACTIONS.USER_DEACTIVATE;
+
+    await logActivity(actionType, 'user', userId, user?.name || 'Unknown', { newStatus });
+
+    // 5. Trigger sync
+    SyncService.processQueue().catch(() => {});
   }, [users]);
 
   // ============ ACTIVITY LOGGING (Local) ============
@@ -467,7 +572,7 @@ export function AdminProvider({ children }) {
     isLoading,
     error,
 
-    // User management (API)
+    // User management (offline-first)
     fetchUsers,
     createUser,
     updateUser,

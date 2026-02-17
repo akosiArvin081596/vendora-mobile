@@ -5,6 +5,8 @@ import ConflictResolver from './ConflictResolver';
 import ProductRepository from '../db/repositories/ProductRepository';
 import CustomerRepository from '../db/repositories/CustomerRepository';
 import InventoryAdjustmentRepository from '../db/repositories/InventoryAdjustmentRepository';
+import LedgerRepository from '../db/repositories/LedgerRepository';
+import AdminUserRepository from '../db/repositories/AdminUserRepository';
 
 let _isProcessing = false;
 let _onStatusChange = null;
@@ -210,6 +212,11 @@ const SyncService = {
     } else if (item.entity_type === 'product') {
       if (item.action === 'create') {
         ProductRepository.updateAfterSync(item.entity_local_id, serverData);
+        // Enqueue any pending inventory adjustments that were waiting for this product's server ID
+        const enqueued = InventoryAdjustmentRepository.enqueuePendingForProduct(item.entity_local_id, serverData.id);
+        if (enqueued > 0) {
+          console.log(`[Sync] Enqueued ${enqueued} pending adjustments for product ${serverData.id}`);
+        }
       } else if (item.action === 'update') {
         // Server-wins: overwrite local with server response
         ProductRepository.upsertFromServer(serverData);
@@ -225,6 +232,16 @@ const SyncService = {
       // Update product stock with server's authoritative value
       if (serverData.inventory?.stock != null) {
         ProductRepository.updateStock(serverData.product_id, serverData.inventory.stock);
+      }
+    } else if (item.entity_type === 'ledger_entry' && item.action === 'create') {
+      LedgerRepository.updateAfterSync(item.entity_local_id, serverData);
+    } else if (item.entity_type === 'admin_user') {
+      if (item.action === 'create') {
+        AdminUserRepository.updateAfterSync(item.entity_local_id, serverData);
+      } else if (item.action === 'update' || item.action === 'status_change') {
+        AdminUserRepository.upsertFromServer(serverData);
+      } else if (item.action === 'delete') {
+        AdminUserRepository.markDeleted(serverData.id ?? item.entity_local_id);
       }
     }
   },

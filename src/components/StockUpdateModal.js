@@ -58,7 +58,7 @@ export default function StockUpdateModal({
 
     setSubmitting(true);
     try {
-      const result = await onUpdateStock(product.id, adjustment, notes, costValue);
+      const result = await onUpdateStock(product.id || product.local_id, adjustment, notes, costValue);
       const serverStock = result?.inventory?.stock;
       Alert.alert(
         'Stock Updated',

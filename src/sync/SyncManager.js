@@ -4,6 +4,8 @@ import CategoryRepository from '../db/repositories/CategoryRepository';
 import CustomerRepository from '../db/repositories/CustomerRepository';
 import OrderRepository from '../db/repositories/OrderRepository';
 import InventoryAdjustmentRepository from '../db/repositories/InventoryAdjustmentRepository';
+import LedgerRepository from '../db/repositories/LedgerRepository';
+import AdminUserRepository from '../db/repositories/AdminUserRepository';
 import { getDatabase } from '../db/database';
 
 /**
@@ -22,6 +24,8 @@ const SyncManager = {
         this.syncCategories({ full: true }),
         this.syncCustomers({ full: true }),
         this.syncOrders({ full: true }),
+        this.syncLedger({ full: true }),
+        this.syncAdminUsers({ full: true }),
       ]);
       console.log('[SyncManager] Initial sync complete.');
     } catch (error) {
@@ -40,6 +44,8 @@ const SyncManager = {
         this.syncCategories(),
         this.syncCustomers(),
         this.syncOrders(),
+        this.syncLedger(),
+        this.syncAdminUsers(),
       ]);
       console.log('[SyncManager] Incremental sync complete.');
     } catch (error) {
@@ -227,6 +233,100 @@ const SyncManager = {
   },
 
   /**
+   * Sync ledger entries from GET /ledger.
+   */
+  async syncLedger(options = {}) {
+    const { full = false } = options;
+    const lastTimestamp = full ? null : this._getLastSyncTimestamp('ledger');
+
+    try {
+      let page = 1;
+      let hasMore = true;
+      let totalSynced = 0;
+
+      while (hasMore) {
+        const params = { per_page: 100, page };
+        if (lastTimestamp) {
+          params.updated_since = lastTimestamp;
+        }
+
+        const response = await api.get('/ledger', { params });
+        const entries = response.data || [];
+
+        if (entries.length > 0) {
+          LedgerRepository.bulkUpsertFromServer(entries);
+          totalSynced += entries.length;
+        }
+
+        const meta = response.meta;
+        if (meta && page < meta.last_page) {
+          page++;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      this._setLastSyncTimestamp('ledger', new Date().toISOString());
+      if (full) {
+        this._markFullSyncCompleted('ledger');
+      }
+
+      console.log(`[SyncManager] Ledger synced: ${totalSynced} records.`);
+      return totalSynced;
+    } catch (error) {
+      console.error('[SyncManager] Ledger sync error:', error.message);
+      throw error;
+    }
+  },
+
+  /**
+   * Sync admin users from GET /admin/users.
+   */
+  async syncAdminUsers(options = {}) {
+    const { full = false } = options;
+    const lastTimestamp = full ? null : this._getLastSyncTimestamp('admin_users');
+
+    try {
+      let page = 1;
+      let hasMore = true;
+      let totalSynced = 0;
+
+      while (hasMore) {
+        const params = { per_page: 100, page };
+        if (lastTimestamp) {
+          params.updated_since = lastTimestamp;
+        }
+
+        const response = await api.get('/admin/users', { params });
+        const users = response.data || [];
+
+        if (users.length > 0) {
+          AdminUserRepository.bulkUpsertFromServer(users);
+          totalSynced += users.length;
+        }
+
+        const meta = response.meta;
+        if (meta && page < meta.last_page) {
+          page++;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      this._setLastSyncTimestamp('admin_users', new Date().toISOString());
+      if (full) {
+        this._markFullSyncCompleted('admin_users');
+      }
+
+      console.log(`[SyncManager] Admin users synced: ${totalSynced} records.`);
+      return totalSynced;
+    } catch (error) {
+      console.error('[SyncManager] Admin users sync error:', error.message);
+      throw error;
+    }
+  },
+
+  /**
    * Check if initial sync has been completed for all entity types.
    */
   isInitialSyncComplete() {
@@ -234,7 +334,7 @@ const SyncManager = {
     const result = db.getFirstSync(
       `SELECT COUNT(*) as count FROM sync_meta WHERE full_sync_completed = 1`
     );
-    return (result?.count ?? 0) >= 4; // products, categories, customers, orders
+    return (result?.count ?? 0) >= 6; // products, categories, customers, orders, ledger, admin_users
   },
 
   // --- Internal helpers ---
@@ -283,6 +383,8 @@ const SyncManager = {
     CustomerRepository.clear();
     OrderRepository.clear();
     InventoryAdjustmentRepository.clear();
+    LedgerRepository.clear();
+    AdminUserRepository.clear();
     this.clearSyncMeta();
     console.log('[SyncManager] All local data cleared.');
   },

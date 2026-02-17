@@ -375,20 +375,29 @@ export function ProductProvider({ children }) {
    * Update stock (set) — offline-first via inventory adjustment.
    */
   const updateStock = useCallback((productId, newStock) => {
-    // Get current stock
-    let currentStock = 0;
+    // Resolve product — productId may be server id or local_id
+    let dbProduct = null;
     try {
-      const product = ProductRepository.getById(productId);
-      currentStock = product?.stock ?? 0;
+      dbProduct = ProductRepository.getById(productId);
+      if (!dbProduct) {
+        dbProduct = ProductRepository.getByLocalId(productId);
+      }
     } catch (err) {
-      const memProduct = inventory.find((p) => p.id === productId);
-      currentStock = memProduct?.stock ?? 0;
+      // ignore
     }
+
+    const currentStock = dbProduct?.stock
+      ?? inventory.find((p) => p.id === productId || p.local_id === productId)?.stock
+      ?? 0;
+
+    const serverId = dbProduct?.id || null;
+    const localId = dbProduct?.local_id || productId;
 
     // Create a 'set' adjustment
     try {
       InventoryAdjustmentRepository.createAdjustment({
-        productId,
+        productId: serverId,
+        productLocalId: localId,
         type: 'set',
         quantity: newStock,
         currentStock,
@@ -398,10 +407,10 @@ export function ProductProvider({ children }) {
       throw err;
     }
 
-    // Update React state
+    // Update React state — match by id or local_id
     const updateFn = (prev) =>
       prev.map((product) =>
-        product.id === productId
+        (serverId && product.id === serverId) || product.local_id === localId
           ? { ...product, stock: Math.max(0, newStock) }
           : product
       );
@@ -421,22 +430,30 @@ export function ProductProvider({ children }) {
     const type = adjustment >= 0 ? 'add' : 'remove';
     const quantity = Math.abs(adjustment);
 
-    // Get current stock from SQLite
-    let currentStock = 0;
+    // Resolve product from SQLite — productId may be server id or local_id
+    let dbProduct = null;
     try {
-      const product = ProductRepository.getById(productId);
-      currentStock = product?.stock ?? 0;
+      dbProduct = ProductRepository.getById(productId);
+      if (!dbProduct) {
+        dbProduct = ProductRepository.getByLocalId(productId);
+      }
     } catch (err) {
-      // Fallback to in-memory
-      const memProduct = inventory.find((p) => p.id === productId);
-      currentStock = memProduct?.stock ?? 0;
+      // ignore
     }
+
+    const currentStock = dbProduct?.stock
+      ?? inventory.find((p) => p.id === productId || p.local_id === productId)?.stock
+      ?? 0;
+
+    const serverId = dbProduct?.id || null;
+    const localId = dbProduct?.local_id || productId;
 
     // 1. Create adjustment in SQLite + update stock + enqueue sync
     let result;
     try {
       result = InventoryAdjustmentRepository.createAdjustment({
-        productId,
+        productId: serverId,
+        productLocalId: localId,
         type,
         quantity,
         currentStock,
@@ -448,10 +465,10 @@ export function ProductProvider({ children }) {
       throw err;
     }
 
-    // 2. Update React state immediately
+    // 2. Update React state immediately — match by id or local_id
     const updateFn = (prev) =>
       prev.map((product) =>
-        product.id === productId
+        (serverId && product.id === serverId) || product.local_id === localId
           ? { ...product, stock: result.newStock }
           : product
       );
@@ -533,9 +550,9 @@ export function ProductProvider({ children }) {
     // 3. Immediately add to React state
     const newProduct = {
       ...productData,
-      localId,
+      local_id: localId,
       id: null,
-      syncStatus: 'pending',
+      sync_status: 'pending',
     };
 
     setInventory((prev) => [...prev, newProduct]);
@@ -741,8 +758,8 @@ export function ProductProvider({ children }) {
     return publicProducts.find((product) => product.id === productId);
   }, [publicProducts]);
 
-  // Get product by SKU — check in-memory, then SQLite, then API
-  const getProductBySku = useCallback(async (sku, localOnly = true) => {
+  // Get product by SKU — check in-memory, then SQLite (no API fallback)
+  const getProductBySku = useCallback(async (sku) => {
     // Try in-memory first
     let localProduct = inventory.find(
       (product) => product.sku?.toUpperCase() === sku?.toUpperCase()
@@ -766,22 +783,10 @@ export function ProductProvider({ children }) {
       }
     }
 
-    if (localProduct || localOnly) {
-      return localProduct || null;
-    }
-
-    try {
-      const response = await productService.getBySku(sku);
-      return response.data;
-    } catch (err) {
-      if (err.code === 'PRODUCT_NOT_FOUND') {
-        return null;
-      }
-      throw err;
-    }
+    return localProduct || null;
   }, [inventory, publicProducts]);
 
-  // Get product by barcode — check in-memory, then SQLite, then API
+  // Get product by barcode — check in-memory, then SQLite (no API fallback)
   const getProductByBarcode = useCallback(async (barcode) => {
     let localProduct = inventory.find((product) => product.barcode === barcode);
 
@@ -801,19 +806,7 @@ export function ProductProvider({ children }) {
       }
     }
 
-    if (localProduct) {
-      return localProduct;
-    }
-
-    try {
-      const response = await productService.getByBarcode(barcode);
-      return response.data;
-    } catch (err) {
-      if (err.code === 'PRODUCT_NOT_FOUND') {
-        return null;
-      }
-      throw err;
-    }
+    return localProduct || null;
   }, [inventory, publicProducts]);
 
   // Get low stock products from inventory

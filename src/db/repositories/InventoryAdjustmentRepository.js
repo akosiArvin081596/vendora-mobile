@@ -23,6 +23,7 @@ const InventoryAdjustmentRepository = {
    */
   createAdjustment({
     productId,
+    productLocalId = null,
     type,
     quantity,
     currentStock,
@@ -54,42 +55,52 @@ const InventoryAdjustmentRepository = {
       // 1. Insert adjustment record
       db.runSync(
         `INSERT INTO inventory_adjustments
-          (local_id, product_id, user_id, type, quantity, stock_before, stock_after,
+          (local_id, product_id, product_local_id, user_id, type, quantity, stock_before, stock_after,
            unit_cost, note, sync_status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
         [
-          localId, productId, userId, type, quantity,
+          localId, productId, productLocalId, userId, type, quantity,
           currentStock, newStock, unitCostCents, note, now, now,
         ]
       );
 
-      // 2. Update product stock in SQLite
-      db.runSync(
-        'UPDATE products SET stock = ?, updated_at = ? WHERE id = ?',
-        [newStock, now, productId]
-      );
-
-      // 3. Enqueue sync
-      const payload = {
-        product_id: productId,
-        type,
-        quantity,
-        note: note || undefined,
-      };
-
-      // Include unit_cost for add/set types (backend expects cents)
-      if ((type === 'add' || type === 'set') && unitCost != null) {
-        payload.unit_cost = unitCostCents;
+      // 2. Update product stock in SQLite — use local_id if server id is null
+      if (productId) {
+        db.runSync(
+          'UPDATE products SET stock = ?, updated_at = ? WHERE id = ?',
+          [newStock, now, productId]
+        );
+      } else if (productLocalId) {
+        db.runSync(
+          'UPDATE products SET stock = ?, updated_at = ? WHERE local_id = ?',
+          [newStock, now, productLocalId]
+        );
       }
 
-      idempotencyKey = SyncQueueRepository.enqueue({
-        entityType: 'inventory_adjustment',
-        entityLocalId: localId,
-        action: 'create',
-        endpoint: '/inventory/adjustments',
-        method: 'POST',
-        payload,
-      });
+      // 3. Enqueue sync only if product has a server ID
+      if (productId) {
+        const payload = {
+          product_id: productId,
+          type,
+          quantity,
+          note: note || undefined,
+        };
+
+        // Include unit_cost for add/set types (backend expects cents)
+        if ((type === 'add' || type === 'set') && unitCost != null) {
+          payload.unit_cost = unitCostCents;
+        }
+
+        idempotencyKey = SyncQueueRepository.enqueue({
+          entityType: 'inventory_adjustment',
+          entityLocalId: localId,
+          action: 'create',
+          endpoint: '/inventory/adjustments',
+          method: 'POST',
+          payload,
+        });
+      }
+      // If no server ID, sync will happen after product itself syncs
     });
 
     return { localId, idempotencyKey, newStock };
@@ -153,6 +164,51 @@ const InventoryAdjustmentRepository = {
     );
 
     return localId;
+  },
+
+  /**
+   * Enqueue pending adjustments for a product that just received its server ID.
+   * Called after a product syncs and gets assigned a server ID.
+   */
+  enqueuePendingForProduct(productLocalId, serverId) {
+    const db = getDatabase();
+    const pending = db.getAllSync(
+      `SELECT * FROM inventory_adjustments
+       WHERE product_local_id = ? AND product_id IS NULL AND sync_status = 'pending'
+       ORDER BY created_at ASC`,
+      [productLocalId]
+    );
+
+    for (const adj of pending) {
+      // Update the adjustment with the server product ID
+      db.runSync(
+        'UPDATE inventory_adjustments SET product_id = ?, updated_at = ? WHERE local_id = ?',
+        [serverId, nowISO(), adj.local_id]
+      );
+
+      // Enqueue sync
+      const payload = {
+        product_id: serverId,
+        type: adj.type,
+        quantity: adj.quantity,
+        note: adj.note || undefined,
+      };
+
+      if ((adj.type === 'add' || adj.type === 'set') && adj.unit_cost) {
+        payload.unit_cost = adj.unit_cost;
+      }
+
+      SyncQueueRepository.enqueue({
+        entityType: 'inventory_adjustment',
+        entityLocalId: adj.local_id,
+        action: 'create',
+        endpoint: '/inventory/adjustments',
+        method: 'POST',
+        payload,
+      });
+    }
+
+    return pending.length;
   },
 
   /**

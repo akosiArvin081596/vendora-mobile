@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
-import api from '../services/api';
 import CustomerRepository from '../db/repositories/CustomerRepository';
 import SyncQueueRepository from '../db/repositories/SyncQueueRepository';
+import SyncManager from '../sync/SyncManager';
 import SyncService from '../sync/SyncService';
 
 const CustomerContext = createContext();
@@ -32,20 +32,6 @@ const normalizeLocalCustomer = (row) => {
   };
 };
 
-/**
- * Normalize an API customer response.
- */
-const normalizeApiCustomer = (c) => {
-  return {
-    ...c,
-    loyaltyPoints: c.loyaltyPoints ?? 0,
-    totalSpent: c.total_spent ?? c.totalSpent ?? 0,
-    orderCount: c.orders_count ?? c.orderCount ?? 0,
-    memberSince: c.created_at ? new Date(c.created_at) : new Date(),
-    tier: 'bronze',
-  };
-};
-
 export function CustomerProvider({ children }) {
   const [customers, setCustomers] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -72,7 +58,7 @@ export function CustomerProvider({ children }) {
   }, []);
 
   /**
-   * Fetch customers from API (local-first, then background refresh).
+   * Fetch customers — offline-first (SQLite + background pull-sync).
    */
   const fetchCustomers = useCallback(async (forceRefresh = false) => {
     if (customersLoaded.current && !forceRefresh) {
@@ -86,23 +72,17 @@ export function CustomerProvider({ children }) {
       return localData;
     }
 
-    // Step 2: Fetch from API
+    // Step 2: No local data — do a synchronous pull-sync
     try {
       setIsLoading(true);
-      const response = await api.get('/customers', { params: { per_page: 100 } });
-      const apiCustomers = (response.data || []).map(normalizeApiCustomer);
+      await SyncManager.syncCustomers({ full: true });
 
-      setCustomers(apiCustomers);
+      // Reload from SQLite
+      const rows = CustomerRepository.getAll();
+      const normalized = rows.map(normalizeLocalCustomer);
+      setCustomers(normalized);
       customersLoaded.current = true;
-
-      // Cache to SQLite
-      try {
-        CustomerRepository.bulkUpsertFromServer(response.data || []);
-      } catch (dbErr) {
-        console.warn('[CustomerContext] Error caching customers:', dbErr.message);
-      }
-
-      return apiCustomers;
+      return normalized;
     } catch (err) {
       console.error('[CustomerContext] Error fetching customers:', err.message);
       // Try local as fallback
@@ -116,16 +96,17 @@ export function CustomerProvider({ children }) {
   }, [customers, loadCustomersFromLocal]);
 
   /**
-   * Background refresh customers from API.
+   * Background refresh customers via SyncManager pull-sync.
    */
   const _backgroundRefreshCustomers = useCallback(async () => {
     try {
-      const response = await api.get('/customers', { params: { per_page: 100 } });
-      const apiCustomers = (response.data || []).map(normalizeApiCustomer);
+      await SyncManager.syncCustomers();
 
-      if (apiCustomers.length > 0) {
-        CustomerRepository.bulkUpsertFromServer(response.data || []);
-        setCustomers(apiCustomers);
+      // Reload from SQLite after sync
+      const rows = CustomerRepository.getAll();
+      if (rows.length > 0) {
+        const normalized = rows.map(normalizeLocalCustomer);
+        setCustomers(normalized);
         customersLoaded.current = true;
       }
     } catch (err) {

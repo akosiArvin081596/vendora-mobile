@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,8 +12,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { formatCurrency, formatDateTime } from '../utils/checkoutHelpers';
-import ledgerService from '../services/ledgerService';
-import inventoryService from '../services/inventoryService';
+import { useLedger } from '../context/LedgerContext';
+import { useProducts } from '../context/ProductContext';
 import AddLedgerEntryModal from '../components/AddLedgerEntryModal';
 
 const TYPE_FILTERS = [
@@ -77,9 +77,8 @@ const TYPE_STYLES = {
 };
 
 export default function LedgerScreen() {
-  const [entries, setEntries] = useState([]);
-  const [summary, setSummary] = useState(null);
-  const [products, setProducts] = useState([]);
+  const { entries, summary, fetchEntries, addEntry } = useLedger();
+  const { inventory } = useProducts();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -115,46 +114,30 @@ export default function LedgerScreen() {
     }
   }, []);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const params = {
-        per_page: 100,
-        ...getDateRange(dateFilter),
-      };
+  const buildFilters = useCallback(() => {
+    const filters = {
+      ...getDateRange(dateFilter),
+    };
 
-      if (typeFilter !== 'all') {
-        params.type = typeFilter;
-      }
-
-      if (searchQuery.trim()) {
-        params.search = searchQuery.trim();
-      }
-
-      const [entriesRes, summaryRes] = await Promise.all([
-        ledgerService.getAll(params),
-        ledgerService.getSummary(),
-      ]);
-
-      setEntries(entriesRes.data || []);
-      setSummary(summaryRes.data || null);
-    } catch (error) {
-      console.error('Failed to fetch ledger data:', error);
+    if (typeFilter !== 'all') {
+      filters.type = typeFilter;
     }
+
+    if (searchQuery.trim()) {
+      filters.search = searchQuery.trim();
+    }
+
+    return filters;
   }, [typeFilter, dateFilter, searchQuery, getDateRange]);
 
-  const fetchProducts = useCallback(async () => {
-    try {
-      const response = await inventoryService.getAll({ per_page: 100 });
-      setProducts(response.data || []);
-    } catch (error) {
-      console.error('Failed to fetch products:', error);
-    }
-  }, []);
+  const fetchData = useCallback(async (forceRefresh = false) => {
+    await fetchEntries(buildFilters(), forceRefresh);
+  }, [fetchEntries, buildFilters]);
 
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([fetchData(), fetchProducts()]);
+      await fetchData(true);
       setLoading(false);
     };
     init();
@@ -168,7 +151,7 @@ export default function LedgerScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await fetchData();
+    await fetchData(true);
     setRefreshing(false);
   };
 
@@ -177,9 +160,7 @@ export default function LedgerScreen() {
   };
 
   const handleAddEntry = async (data) => {
-    await ledgerService.create(data);
-    await fetchData();
-    await fetchProducts();
+    addEntry(data);
   };
 
   const renderEntryCard = ({ item: entry }) => {
@@ -398,7 +379,7 @@ export default function LedgerScreen() {
           <FlatList
             data={entries}
             renderItem={renderEntryCard}
-            keyExtractor={(item) => item.id.toString()}
+            keyExtractor={(item) => (item.id || item.local_id).toString()}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 120 }}
             refreshControl={
@@ -447,7 +428,7 @@ export default function LedgerScreen() {
         visible={showAddModal}
         onClose={() => setShowAddModal(false)}
         onSubmit={handleAddEntry}
-        products={products}
+        products={inventory}
       />
     </SafeAreaView>
   );

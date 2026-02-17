@@ -15,6 +15,7 @@ import { AdminProvider } from "./src/context/AdminContext";
 import { SocketProvider } from "./src/context/SocketContext";
 import { NetworkProvider } from "./src/context/NetworkContext";
 import { SyncProvider } from "./src/context/SyncContext";
+import { LedgerProvider } from "./src/context/LedgerContext";
 import DOMErrorBoundary from "./src/components/DOMErrorBoundary";
 import { getDatabase } from "./src/db/database";
 import { registerBackgroundSync } from "./src/tasks/backgroundSync";
@@ -49,6 +50,7 @@ export default function App() {
           <SyncProvider>
             <AdminProvider>
               <ProductProvider>
+                <LedgerProvider>
                 <OrderProvider>
                   <SocketProvider>
                     <CustomerProvider>
@@ -65,6 +67,7 @@ export default function App() {
                     </CustomerProvider>
                   </SocketProvider>
                 </OrderProvider>
+                </LedgerProvider>
               </ProductProvider>
             </AdminProvider>
           </SyncProvider>

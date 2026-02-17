@@ -1,6 +1,7 @@
 import { migration_001_initial } from './001_initial';
+import { migration_002_ledger_admin } from './002_ledger_admin';
 
-const migrations = [migration_001_initial];
+const migrations = [migration_001_initial, migration_002_ledger_admin];
 
 /**
  * Runs all pending migrations in order.
