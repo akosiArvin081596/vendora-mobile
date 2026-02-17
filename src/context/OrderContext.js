@@ -143,12 +143,12 @@ export function OrderProvider({ children }) {
       ordersLoaded.current = true;
       return localOrders;
     } catch (err) {
-      console.error('[OrderContext] Error fetching orders:', err);
-      // Fallback to local
+      // Silent — offline-first: local data is already displayed
+      console.warn('[OrderContext] Orders sync skipped (offline):', err.message);
       if (!ordersLoaded.current) {
         loadOrdersFromLocal();
       }
-      return orders;
+      return localData.length > 0 ? localData : orders;
     } finally {
       setIsLoading(false);
     }

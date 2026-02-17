@@ -84,12 +84,12 @@ export function CustomerProvider({ children }) {
       customersLoaded.current = true;
       return normalized;
     } catch (err) {
-      console.error('[CustomerContext] Error fetching customers:', err.message);
-      // Try local as fallback
+      // Silent — offline-first: local data is already displayed
+      console.warn('[CustomerContext] Customers sync skipped (offline):', err.message);
       if (!customersLoaded.current) {
         loadCustomersFromLocal();
       }
-      return customers;
+      return localData.length > 0 ? localData : customers;
     } finally {
       setIsLoading(false);
     }

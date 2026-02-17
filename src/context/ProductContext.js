@@ -186,16 +186,14 @@ export function ProductProvider({ children }) {
     // Step 1: Load from SQLite
     const localData = loadPublicProductsFromLocal();
     if (localData.length > 0 && !forceRefresh) {
-      // Background pull-sync
+      // Background pull-sync (silent)
       _backgroundRefreshInventory();
       return localData;
     }
 
-    // Step 2: Pull-sync via SyncManager
+    // Step 2: Pull-sync via SyncManager, but never fail loudly
+    setIsLoadingProducts(true);
     try {
-      setIsLoadingProducts(true);
-      setError(null);
-
       await SyncManager.syncProducts({ full: !productsLoaded.current });
 
       // Reload from SQLite
@@ -211,18 +209,15 @@ export function ProductProvider({ children }) {
       }
       return publicProducts;
     } catch (err) {
-      console.error('Error fetching products:', err);
-      setError(err.message);
+      // Silent — offline-first: local data is already displayed
+      console.warn('[ProductContext] Products sync skipped (offline):', err.message);
       setIsOffline(true);
 
-      // Use fallback only if no data loaded yet
-      if (!productsLoaded.current) {
-        const local = loadPublicProductsFromLocal();
-        if (local.length === 0) {
-          setPublicProducts(fallbackProducts);
-        }
+      // Use fallback only if absolutely no data
+      if (!productsLoaded.current && localData.length === 0) {
+        setPublicProducts(fallbackProducts);
       }
-      return publicProducts;
+      return localData.length > 0 ? localData : publicProducts;
     } finally {
       setIsLoadingProducts(false);
     }
@@ -239,17 +234,16 @@ export function ProductProvider({ children }) {
 
     // Step 1: Always load from SQLite first (instant)
     const localData = loadInventoryFromLocal();
+
     if (localData.length > 0 && !forceRefresh) {
-      // Data displayed from local — background pull-sync
+      // Data displayed from local — background pull-sync (silent)
       _backgroundRefreshInventory();
       return localData;
     }
 
-    // Step 2: If force refresh or no local data, try pull-sync via SyncManager
+    // Step 2: Try pull-sync via SyncManager, but never fail loudly
+    setIsLoadingInventory(true);
     try {
-      setIsLoadingInventory(true);
-      setError(null);
-
       await SyncManager.syncProducts({ full: !inventoryLoaded.current });
 
       // Reload from SQLite after sync
@@ -260,16 +254,12 @@ export function ProductProvider({ children }) {
       setIsOffline(false);
       return normalized;
     } catch (err) {
-      console.error('Error fetching inventory:', err);
-      setError(err.message);
+      // Silent — offline-first: local data is already displayed
+      console.warn('[ProductContext] Inventory sync skipped (offline):', err.message);
       setIsOffline(true);
 
-      // Always fall back to whatever is in SQLite
-      const local = loadInventoryFromLocal();
-      if (local.length === 0 && !inventoryLoaded.current) {
-        setInventory([]);
-      }
-      return inventory;
+      // Return whatever is in SQLite (already loaded in step 1)
+      return localData;
     } finally {
       setIsLoadingInventory(false);
     }
@@ -309,9 +299,9 @@ export function ProductProvider({ children }) {
       return localCats;
     }
 
-    // Step 2: Pull-sync via SyncManager
+    // Step 2: Pull-sync via SyncManager, but never fail loudly
+    setIsLoadingCategories(true);
     try {
-      setIsLoadingCategories(true);
       await SyncManager.syncCategories({ full: !categoriesLoaded.current });
 
       // Reload from SQLite
@@ -321,14 +311,14 @@ export function ProductProvider({ children }) {
       }
       return categories;
     } catch (err) {
-      console.error('Error fetching categories:', err);
-      if (!categoriesLoaded.current) {
-        const local = loadCategoriesFromLocal();
-        if (local.length === 0) {
-          setCategories(fallbackCategories);
-        }
+      // Silent — offline-first: local data is already displayed
+      console.warn('[ProductContext] Categories sync skipped (offline):', err.message);
+
+      // Use fallback only if absolutely no data
+      if (!categoriesLoaded.current && localCats.length === 0) {
+        setCategories(fallbackCategories);
       }
-      return categories;
+      return localCats.length > 0 ? localCats : categories;
     } finally {
       setIsLoadingCategories(false);
     }

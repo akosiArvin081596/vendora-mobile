@@ -135,13 +135,12 @@ export function AdminProvider({ children }) {
       usersLoaded.current = true;
       return normalized;
     } catch (err) {
-      console.error('[AdminContext] Error fetching users:', err.message);
-      setError(err.message);
-      // Return whatever local data exists
+      // Silent — offline-first: local data is already displayed
+      console.warn('[AdminContext] Users sync skipped (offline):', err.message);
       if (!usersLoaded.current) {
         loadUsersFromLocal(params);
       }
-      return users;
+      return localData.length > 0 ? localData : users;
     } finally {
       setIsLoading(false);
     }
