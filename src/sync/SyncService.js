@@ -145,13 +145,13 @@ const SyncService = {
     if (localImageUri && isLocalFile(localImageUri) && (item.method === 'POST' || item.method === 'PUT')) {
       // Always remove the local file URI — server can't use it
       delete payload.image;
-      try {
-        const base64DataUri = await imageToBase64(localImageUri);
-        if (base64DataUri) {
-          payload.image_base64 = base64DataUri;
-        }
-      } catch (err) {
-        console.warn('[Sync] Failed to read image file, sending without image:', err.message);
+      console.log('[Sync] Converting image to base64:', localImageUri?.substring(0, 80));
+      const base64DataUri = await imageToBase64(localImageUri);
+      if (base64DataUri) {
+        payload.image_base64 = base64DataUri;
+        console.log('[Sync] Image converted, base64 length:', base64DataUri.length);
+      } else {
+        console.error('[Sync] imageToBase64 returned null for:', localImageUri?.substring(0, 80));
       }
     }
 
