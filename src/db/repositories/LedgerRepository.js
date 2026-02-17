@@ -94,7 +94,7 @@ const LedgerRepository = {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       [
         localId,
-        entry.user_id ?? null,
+        entry.user_id ?? getCurrentUserId(),
         entry.type,
         entry.category ?? null,
         entry.description ?? null,

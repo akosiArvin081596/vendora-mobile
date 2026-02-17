@@ -59,7 +59,7 @@ const InventoryAdjustmentRepository = {
            unit_cost, note, sync_status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
         [
-          localId, productId, productLocalId, userId, type, quantity,
+          localId, productId, productLocalId, userId ?? getCurrentUserId(), type, quantity,
           currentStock, newStock, unitCostCents, note, now, now,
         ]
       );

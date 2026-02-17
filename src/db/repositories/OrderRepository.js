@@ -76,7 +76,7 @@ const OrderRepository = {
            sync_status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, 'pos', 'pending', ?, ?)`,
         [
-          orderLocalId, userId, customerId, customerLocalId, storeId,
+          orderLocalId, userId ?? getCurrentUserId(), customerId, customerLocalId, storeId,
           now, subtotalCents, taxCents, discountCents, totalCents, notes,
           now, now,
         ]

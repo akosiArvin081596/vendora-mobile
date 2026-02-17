@@ -176,7 +176,7 @@ const ProductRepository = {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       [
         localId,
-        product.user_id ?? null,
+        product.user_id ?? getCurrentUserId(),
         product.category_id ?? null,
         product.name,
         product.sku ?? null,

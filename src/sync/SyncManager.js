@@ -18,19 +18,20 @@ const SyncManager = {
    */
   async initialSync() {
     console.log('[SyncManager] Starting initial sync...');
-    try {
-      await Promise.all([
-        this.syncProducts({ full: true }),
-        this.syncCategories({ full: true }),
-        this.syncCustomers({ full: true }),
-        this.syncOrders({ full: true }),
-        this.syncLedger({ full: true }),
-        this.syncAdminUsers({ full: true }),
-      ]);
-      console.log('[SyncManager] Initial sync complete.');
-    } catch (error) {
-      console.error('[SyncManager] Initial sync error:', error.message);
+    const results = await Promise.allSettled([
+      this.syncProducts({ full: true }),
+      this.syncCategories({ full: true }),
+      this.syncCustomers({ full: true }),
+      this.syncOrders({ full: true }),
+      this.syncLedger({ full: true }),
+      this.syncAdminUsers({ full: true }),
+    ]);
+
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length > 0) {
+      failed.forEach((r) => console.warn('[SyncManager] Sync failed:', r.reason?.message));
     }
+    console.log(`[SyncManager] Initial sync complete. ${results.length - failed.length}/${results.length} succeeded.`);
   },
 
   /**
@@ -38,19 +39,20 @@ const SyncManager = {
    */
   async incrementalSync() {
     console.log('[SyncManager] Starting incremental sync...');
-    try {
-      await Promise.all([
-        this.syncProducts(),
-        this.syncCategories(),
-        this.syncCustomers(),
-        this.syncOrders(),
-        this.syncLedger(),
-        this.syncAdminUsers(),
-      ]);
-      console.log('[SyncManager] Incremental sync complete.');
-    } catch (error) {
-      console.error('[SyncManager] Incremental sync error:', error.message);
+    const results = await Promise.allSettled([
+      this.syncProducts(),
+      this.syncCategories(),
+      this.syncCustomers(),
+      this.syncOrders(),
+      this.syncLedger(),
+      this.syncAdminUsers(),
+    ]);
+
+    const failed = results.filter((r) => r.status === 'rejected');
+    if (failed.length > 0) {
+      failed.forEach((r) => console.warn('[SyncManager] Sync failed:', r.reason?.message));
     }
+    console.log(`[SyncManager] Incremental sync complete. ${results.length - failed.length}/${results.length} succeeded.`);
   },
 
   /**

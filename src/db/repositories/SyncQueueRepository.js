@@ -33,6 +33,13 @@ const SyncQueueRepository = {
     const db = getDatabase();
     const now = nowISO();
 
+    // Recover items stuck in 'in_progress' for more than 2 minutes (app crash, timeout)
+    db.runSync(
+      `UPDATE sync_queue SET status = 'pending', updated_at = ?
+       WHERE status = 'in_progress' AND updated_at < ?`,
+      [now, new Date(Date.now() - 2 * 60 * 1000).toISOString()]
+    );
+
     return db.getAllSync(
       `SELECT * FROM sync_queue
        WHERE status = 'pending'

@@ -103,7 +103,7 @@ const CustomerRepository = {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       [
         localId,
-        customer.user_id ?? null,
+        customer.user_id ?? getCurrentUserId(),
         customer.name,
         customer.email ?? null,
         customer.phone ?? null,
