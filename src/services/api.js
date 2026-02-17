@@ -159,8 +159,20 @@ api.interceptors.response.use(
   async (error) => {
     // Handle network errors
     if (!error.response) {
-      const networkError = new Error('Network error. Please check your connection.');
+      const url = error?.config?.baseURL
+        ? `${error.config.baseURL}${error.config.url}`
+        : error?.config?.url || 'unknown';
+      console.error('[API] Network error details:', {
+        message: error.message,
+        code: error.code,
+        url,
+        method: error?.config?.method,
+        timeout: error?.config?.timeout,
+        hasAuth: !!error?.config?.headers?.Authorization,
+      });
+      const networkError = new Error(`Network error: ${error.message || 'no response received'}`);
       networkError.code = 'NETWORK_ERROR';
+      networkError.originalCode = error.code;
       return Promise.reject(networkError);
     }
 

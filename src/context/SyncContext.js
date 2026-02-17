@@ -67,6 +67,17 @@ export function SyncProvider({ children }) {
     return () => subscription.remove();
   }, [processQueue]);
 
+  // Periodic retry timer — processes queue every 30s when there's pending work
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isOnline && SyncQueueRepository.hasPendingWork()) {
+        processQueue();
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [isOnline, processQueue]);
+
   // Initial count refresh
   useEffect(() => {
     refreshCounts();

@@ -103,6 +103,21 @@ const SyncQueueRepository = {
   },
 
   /**
+   * Mark an item as having a network error — uses backoff but does NOT increment retry_count.
+   * Network errors are transient and should never cause an item to become dead.
+   */
+  markNetworkError(id, errorMessage) {
+    const db = getDatabase();
+    // Backoff: 30s fixed delay for network errors (the periodic timer handles re-processing)
+    const nextRetry = new Date(Date.now() + 30000).toISOString();
+
+    db.runSync(
+      `UPDATE sync_queue SET status = 'pending', error_message = ?, next_retry_at = ?, updated_at = ? WHERE id = ?`,
+      [errorMessage, nextRetry, nowISO(), id]
+    );
+  },
+
+  /**
    * Get counts of items by status.
    */
   getCounts() {

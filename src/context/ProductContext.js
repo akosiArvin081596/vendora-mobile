@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
 import { products as fallbackProducts, categories as fallbackCategories } from '../data/products';
 import ProductRepository from '../db/repositories/ProductRepository';
 import CategoryRepository from '../db/repositories/CategoryRepository';
@@ -6,6 +7,30 @@ import InventoryAdjustmentRepository from '../db/repositories/InventoryAdjustmen
 import SyncQueueRepository from '../db/repositories/SyncQueueRepository';
 import SyncManager from '../sync/SyncManager';
 import SyncService from '../sync/SyncService';
+
+/**
+ * Convert a blob: URL to a base64 data URI so it persists beyond the blob's lifetime.
+ * Only needed on web — native platforms use file:// URIs that persist.
+ */
+const persistImageUri = async (uri) => {
+  if (!uri) return null;
+  if (Platform.OS !== 'web') return uri;
+  if (!uri.startsWith('blob:')) return uri;
+
+  try {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn('[ProductContext] Failed to persist blob URL:', err.message);
+    return uri;
+  }
+};
 
 const ProductContext = createContext();
 
@@ -495,7 +520,10 @@ export function ProductProvider({ children }) {
    * Writes to SQLite, enqueues sync, returns immediately.
    * Image uploads are handled by SyncService when online.
    */
-  const addProduct = useCallback((productData) => {
+  const addProduct = useCallback(async (productData) => {
+    // 0. On web, convert blob: URLs to base64 data URIs before they expire
+    const persistedImageUri = await persistImageUri(productData.image);
+
     // 1. Write to SQLite
     let localId;
     try {
@@ -508,7 +536,7 @@ export function ProductProvider({ children }) {
         stock: productData.stock ?? 0,
         category_id: productData.category_id,
         description: productData.description,
-        image: productData.image ?? null,
+        image: persistedImageUri,
         is_active: productData.is_active ?? true,
         is_ecommerce: productData.is_ecommerce ?? false,
         low_stock_threshold: productData.low_stock_threshold ?? 10,
@@ -529,7 +557,7 @@ export function ProductProvider({ children }) {
         method: 'POST',
         payload: {
           ...productData,
-          _localImageUri: productData.image ?? null,
+          _localImageUri: persistedImageUri,
         },
       });
     } catch (err) {
@@ -559,10 +587,16 @@ export function ProductProvider({ children }) {
    * Update product — offline-first.
    * Writes to SQLite, enqueues sync, returns immediately.
    */
-  const updateProduct = useCallback((productId, updates) => {
+  const updateProduct = useCallback(async (productId, updates) => {
+    // 0. On web, convert blob: URLs to base64 data URIs before they expire
+    const persistedImageUri = updates.image ? await persistImageUri(updates.image) : null;
+
     // 1. Update SQLite
     try {
-      ProductRepository.updateLocal(productId, updates);
+      ProductRepository.updateLocal(productId, {
+        ...updates,
+        ...(persistedImageUri ? { image: persistedImageUri } : {}),
+      });
     } catch (err) {
       console.error('[ProductContext] SQLite product update failed:', err);
       throw err;
@@ -579,7 +613,7 @@ export function ProductProvider({ children }) {
         method: 'PUT',
         payload: {
           ...updates,
-          _localImageUri: updates.image ?? null,
+          _localImageUri: persistedImageUri,
         },
       });
     } catch (err) {

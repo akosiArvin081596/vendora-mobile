@@ -12,7 +12,7 @@ let _isProcessing = false;
 let _onStatusChange = null;
 
 /**
- * Helper to check if a URI is a local file (not a remote URL).
+ * Helper to check if a URI is a local file or data URI (not a remote URL).
  */
 const isLocalFile = (uri) => {
   if (!uri) return false;
@@ -20,8 +20,28 @@ const isLocalFile = (uri) => {
     uri.startsWith('file://') ||
     uri.startsWith('content://') ||
     uri.startsWith('blob:') ||
+    uri.startsWith('data:') ||
     uri.startsWith('/')
   );
+};
+
+/**
+ * Convert a base64 data URI to a File object (for web).
+ */
+const dataUriToFile = (dataUri, filename = 'image.jpg') => {
+  const [header, base64Data] = dataUri.split(',');
+  const mimeMatch = header.match(/data:(.+?);/);
+  const type = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const ext = type.split('/')[1] || 'jpg';
+  const finalFilename = filename.includes('.') ? filename : `${filename}.${ext}`;
+
+  const byteString = atob(base64Data);
+  const ab = new ArrayBuffer(byteString.length);
+  const ia = new Uint8Array(ab);
+  for (let i = 0; i < byteString.length; i++) {
+    ia[i] = byteString.charCodeAt(i);
+  }
+  return new File([ab], finalFilename, { type });
 };
 
 /**
@@ -155,7 +175,14 @@ const SyncService = {
 
     // Add image file
     if (Platform.OS === 'web') {
-      const file = await blobUrlToFile(imageUri, 'product-image');
+      let file;
+      if (imageUri.startsWith('data:')) {
+        file = dataUriToFile(imageUri, 'product-image');
+      } else if (imageUri.startsWith('blob:')) {
+        file = await blobUrlToFile(imageUri, 'product-image');
+      } else {
+        throw new Error(`Unsupported web image URI: ${imageUri.substring(0, 30)}...`);
+      }
       formData.append('image', file);
     } else {
       const filename = imageUri.split('/').pop();
@@ -266,7 +293,15 @@ const SyncService = {
       return;
     }
 
-    // Network errors and server errors get retried with backoff
+    // Network/connectivity errors — don't burn retries, just schedule a backoff wait.
+    // These are transient and will resolve when connectivity returns.
+    if (errorCode === 'NETWORK_ERROR') {
+      console.warn(`[Sync] Network error for ${item.entity_type}:${item.entity_local_id} — will retry without burning attempt`);
+      SyncQueueRepository.markNetworkError(item.id, errorMessage);
+      return;
+    }
+
+    // Server errors and other failures get retried with backoff (burns retry count)
     console.warn(`[Sync] Failed ${item.entity_type}:${item.entity_local_id}: ${errorMessage} (retry ${item.retry_count + 1})`);
     SyncQueueRepository.markFailed(item.id, errorMessage);
   },
