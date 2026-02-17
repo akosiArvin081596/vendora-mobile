@@ -58,37 +58,69 @@ const ProductRepository = {
    */
   upsertFromServer(product) {
     const db = getDatabase();
-    const existing = product.id ? db.getFirstSync('SELECT local_id FROM products WHERE id = ?', [product.id]) : null;
-    const localId = existing?.local_id || product.local_id || require('expo-crypto').randomUUID();
 
-    db.runSync(
-      `INSERT OR REPLACE INTO products
-        (id, local_id, user_id, category_id, name, sku, barcode, price, cost, stock,
-         low_stock_threshold, reorder_point, image, description, is_active, is_ecommerce,
-         sync_status, server_updated_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?)`,
-      [
-        product.id,
-        localId,
-        product.user_id ?? null,
-        product.category_id ?? (typeof product.category === 'object' ? product.category?.id : null),
-        product.name,
-        product.sku ?? null,
-        product.barcode ?? null,
-        product.price ?? 0,
-        product.cost ?? 0,
-        product.stock ?? 0,
-        product.low_stock_threshold ?? product.lowStockThreshold ?? 10,
-        product.reorder_point ?? product.reorderPoint ?? 5,
-        product.image ?? null,
-        product.description ?? null,
-        product.is_active !== undefined ? (product.is_active ? 1 : 0) : 1,
-        product.is_ecommerce !== undefined ? (product.is_ecommerce ? 1 : 0) : 0,
-        product.updated_at ?? nowISO(),
-        product.created_at ?? nowISO(),
-        product.updated_at ?? nowISO(),
-      ]
-    );
+    const fieldValues = [
+      product.user_id ?? null,
+      product.category_id ?? (typeof product.category === 'object' ? product.category?.id : null),
+      product.name,
+      product.sku ?? null,
+      product.barcode ?? null,
+      product.price ?? 0,
+      product.cost ?? 0,
+      product.stock ?? 0,
+      product.low_stock_threshold ?? product.lowStockThreshold ?? 10,
+      product.reorder_point ?? product.reorderPoint ?? 5,
+      product.image ?? null,
+      product.description ?? null,
+      product.is_active !== undefined ? (product.is_active ? 1 : 0) : 1,
+      product.is_ecommerce !== undefined ? (product.is_ecommerce ? 1 : 0) : 0,
+      product.updated_at ?? nowISO(),
+    ];
+
+    const updateSql = `UPDATE products SET
+      user_id = ?, category_id = ?, name = ?, sku = ?, barcode = ?,
+      price = ?, cost = ?, stock = ?, low_stock_threshold = ?, reorder_point = ?,
+      image = ?, description = ?, is_active = ?, is_ecommerce = ?,
+      sync_status = 'synced', server_updated_at = ?, updated_at = ?
+      WHERE local_id = ?`;
+
+    // If product has a server ID, try to find and update existing row first
+    if (product.id) {
+      const existing = db.getFirstSync('SELECT local_id FROM products WHERE id = ?', [product.id]);
+      if (existing) {
+        db.runSync(updateSql, [...fieldValues, nowISO(), existing.local_id]);
+        return existing.local_id;
+      }
+    }
+
+    // No existing row — insert new
+    const localId = product.local_id || Crypto.randomUUID();
+    try {
+      db.runSync(
+        `INSERT INTO products
+          (id, local_id, user_id, category_id, name, sku, barcode, price, cost, stock,
+           low_stock_threshold, reorder_point, image, description, is_active, is_ecommerce,
+           sync_status, server_updated_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?, ?)`,
+        [
+          product.id,
+          localId,
+          ...fieldValues,
+          product.created_at ?? nowISO(),
+          nowISO(),
+        ]
+      );
+    } catch (e) {
+      // Race condition: another sync path inserted this server ID first
+      if (e.message?.includes('UNIQUE constraint failed') && product.id) {
+        const existing = db.getFirstSync('SELECT local_id FROM products WHERE id = ?', [product.id]);
+        if (existing) {
+          db.runSync(updateSql, [...fieldValues, nowISO(), existing.local_id]);
+          return existing.local_id;
+        }
+      }
+      throw e;
+    }
 
     return localId;
   },
@@ -182,6 +214,18 @@ const ProductRepository = {
    */
   updateAfterSync(localId, serverData) {
     const db = getDatabase();
+
+    // Check if pull-sync already created a row with this server ID
+    const duplicate = db.getFirstSync(
+      'SELECT local_id FROM products WHERE id = ? AND local_id != ?',
+      [serverData.id, localId]
+    );
+
+    if (duplicate) {
+      // Delete the duplicate pull-synced row; our local row is authoritative
+      db.runSync('DELETE FROM products WHERE local_id = ?', [duplicate.local_id]);
+    }
+
     db.runSync(
       `UPDATE products
        SET id = ?, sync_status = 'synced', server_updated_at = ?, updated_at = ?
