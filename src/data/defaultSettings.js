@@ -4,7 +4,7 @@ export const defaultSettings = {
     name: 'Vendora Store',
     address: '123 Main Street, City, Country',
     phone: '+1 234 567 8900',
-    email: 'contact@vendora.com',
+    email: 'contact@example.com',
     tin: '',
     logo: null,
   },
@@ -24,20 +24,6 @@ export const defaultSettings = {
     lowStockThreshold: 10,
     allowNegativeStock: false,
   },
-};
-
-// Default admin account
-export const defaultAdminUser = {
-  id: 'admin-001',
-  email: 'admin@vendora.com',
-  password: 'admin123', // In production, this would be hashed
-  name: 'System Administrator',
-  role: 'admin',
-  status: 'active',
-  phone: '+1 234 567 8900',
-  avatar: null,
-  createdAt: new Date().toISOString(),
-  lastLoginAt: null,
 };
 
 // Sample vendor applications for demo
